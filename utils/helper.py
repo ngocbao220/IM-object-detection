@@ -104,7 +104,11 @@ def maybe_extract_nested_zip(extract_dir: Path, inner_file: str | None = None) -
         if not nested_zip.exists():
             matches = list(extract_dir.rglob(Path(inner_file).name))
             if not matches:
-                raise FileNotFoundError(f"Could not find {inner_file} inside Kaggle dataset.")
+                print(
+                    f"Could not find {inner_file} inside Kaggle dataset; "
+                    "using extracted dataset contents instead."
+                )
+                return maybe_extract_nested_zip(extract_dir, inner_file=None)
             nested_zip = matches[0]
         if nested_zip.suffix.lower() != ".zip":
             return nested_zip.parent
@@ -119,6 +123,35 @@ def maybe_extract_nested_zip(extract_dir: Path, inner_file: str | None = None) -
         extract_zip(top_level_zips[0], nested_extract_dir)
         return nested_extract_dir
     return extract_dir
+
+
+def find_dataset_source_dir(extract_dir: Path, dataset_dir_name: str = "public") -> Path:
+    """Find the directory that contains the public OD dataset layout."""
+    direct_public = extract_dir / dataset_dir_name
+    if direct_public.exists():
+        return direct_public
+
+    if (extract_dir / "annotations").exists() and (extract_dir / "classes.json").exists():
+        return extract_dir
+
+    for candidate in extract_dir.rglob(dataset_dir_name):
+        if candidate.is_dir() and (candidate / "annotations").exists():
+            return candidate
+
+    for candidate in extract_dir.rglob("classes.json"):
+        parent = candidate.parent
+        if (parent / "annotations").exists():
+            return parent
+
+    return extract_dir
+
+
+def move_dataset_source_to_target(source_dir: Path, target_dir: Path) -> None:
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    target_dir.mkdir(parents=True)
+    for item in source_dir.iterdir():
+        shutil.move(str(item), str(target_dir / item.name))
 
 
 def find_mounted_kaggle_file(dataset_reference: str) -> Path | None:
@@ -175,13 +208,10 @@ def install_dataset_from_source(
             extract_zip(source_path, extract_dir)
             dataset_source_dir = maybe_extract_nested_zip(extract_dir)
 
-        extracted_public = dataset_source_dir / dataset_dir_name
+        normalized_source_dir = find_dataset_source_dir(dataset_source_dir, dataset_dir_name)
         if target_dir.exists():
             shutil.rmtree(target_dir)
-        if extracted_public.exists():
-            shutil.copytree(extracted_public, target_dir)
-        else:
-            shutil.copytree(dataset_source_dir, target_dir)
+        shutil.copytree(normalized_source_dir, target_dir)
     finally:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)
@@ -276,15 +306,8 @@ def download_public_dataset_from_kaggle(
     extract_zip(zip_files[0], extract_dir)
 
     dataset_source_dir = maybe_extract_nested_zip(extract_dir, inner_file)
-    extracted_public = dataset_source_dir / dataset_dir_name
-    if target_dir.exists():
-        shutil.rmtree(target_dir)
-    if extracted_public.exists():
-        shutil.move(str(extracted_public), str(target_dir))
-    else:
-        target_dir.mkdir(parents=True)
-        for item in dataset_source_dir.iterdir():
-            shutil.move(str(item), str(target_dir / item.name))
+    normalized_source_dir = find_dataset_source_dir(dataset_source_dir, dataset_dir_name)
+    move_dataset_source_to_target(normalized_source_dir, target_dir)
 
     shutil.rmtree(tmp_dir)
     print(f"Dataset ready at {target_dir}")
