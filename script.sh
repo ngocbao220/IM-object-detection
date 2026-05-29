@@ -27,8 +27,11 @@ BATCH_SIZE="${BATCH_SIZE:-2}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
 LR="${LR:-0.005}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
+PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 
 install() {
+  python -m pip install --upgrade pip
+  python -m pip install torch torchvision --index-url "${PYTORCH_INDEX_URL}"
   python -m pip install -r requirements.txt
 }
 
