@@ -9,7 +9,7 @@ set -euo pipefail
 #   bash script.sh evaluate
 #   bash script.sh all
 
-KAGGLE_DATASET_SLUG="${KAGGLE_DATASET_SLUG:-ngocbao/object_detection/final_public.zip}"
+KAGGLE_DATASET_SLUG="${KAGGLE_DATASET_SLUG:-ngocbaotrinhtuan/object-detection/final_public.zip}"
 LOCAL_DATASET_ZIP="${LOCAL_DATASET_ZIP:-}"
 
 TRAIN_DATA="${TRAIN_DATA:-./public/annotations/train.json}"

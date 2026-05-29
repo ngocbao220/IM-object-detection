@@ -75,6 +75,22 @@ def split_kaggle_dataset_reference(reference: str) -> tuple[str, str | None]:
     return slug, inner_file
 
 
+def kaggle_slug_candidates(kaggle_slug: str) -> list[str]:
+    """Return likely Kaggle slug variants for hyphen/underscore naming."""
+    owner, dataset_name = kaggle_slug.split("/", maxsplit=1)
+    names = [
+        dataset_name,
+        dataset_name.replace("_", "-"),
+        dataset_name.replace("-", "_"),
+    ]
+    candidates = []
+    for name in names:
+        candidate = f"{owner}/{name}"
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
 def extract_zip(zip_path: Path, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path) as archive:
@@ -215,18 +231,29 @@ def download_public_dataset_from_kaggle(
         shutil.rmtree(tmp_dir)
     tmp_dir.mkdir(parents=True)
 
-    command = [
-        "kaggle",
-        "datasets",
-        "download",
-        "-d",
-        kaggle_slug,
-        "-p",
-        str(tmp_dir),
-    ]
-    print(f"Downloading Kaggle dataset {kaggle_slug}...")
+    command = []
+    last_error: subprocess.CalledProcessError | None = None
     try:
-        subprocess.run(command, check=True)
+        for candidate_slug in kaggle_slug_candidates(kaggle_slug):
+            command = [
+                "kaggle",
+                "datasets",
+                "download",
+                "-d",
+                candidate_slug,
+                "-p",
+                str(tmp_dir),
+            ]
+            print(f"Downloading Kaggle dataset {candidate_slug}...")
+            try:
+                subprocess.run(command, check=True)
+                kaggle_slug = candidate_slug
+                break
+            except subprocess.CalledProcessError as error:
+                last_error = error
+                print(f"Download failed for {candidate_slug}; trying next candidate if any.")
+        else:
+            raise last_error or RuntimeError("Kaggle download failed.")
     except subprocess.CalledProcessError as error:
         mounted_file = find_mounted_kaggle_file(dataset_reference)
         if mounted_file is not None:
@@ -235,9 +262,9 @@ def download_public_dataset_from_kaggle(
             return install_dataset_from_source(mounted_file, target_dir, dataset_dir_name)
         raise RuntimeError(
             "Kaggle refused the dataset download. Common fixes: make the dataset public, "
-            "use a kaggle.json token from an account that can access it, or attach the "
-            "dataset to a Kaggle notebook and pass "
-            "`--local_zip /kaggle/input/<dataset>/final_public.zip`."
+            "verify the exact slug from the Kaggle dataset URL, use a kaggle.json token "
+            "from an account that can access it, or attach the dataset to a Kaggle "
+            "notebook and pass `--local_zip /kaggle/input/<dataset>/final_public.zip`."
         ) from error
 
     zip_files = sorted(tmp_dir.glob("*.zip"))
