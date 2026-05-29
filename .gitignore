@@ -1,3 +1,8 @@
-/.DS_Store
-/archive
-/archive.zip
+final_public.zip
+public/
+.venv
+uv.lock
+.DS_Store
+.python-version
+*__pycache__
+*logs

@@ -1,0 +1,19 @@
+[project]
+name = "object_detection"
+version = "0.1.0"
+description = "Enviroment for object detection`"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ipykernel>=7.2.0",
+    "ipywidgets>=8.1.8",
+    "kaggle>=1.7.4.5",
+    "matplotlib>=3.10.9",
+    "numpy>=2.4.5",
+    "opencv-python>=4.13.0.92",
+    "seaborn>=0.13.2",
+    "torch>=2.12.0",
+    "torchvision>=0.27.0",
+    "tqdm>=4.67.1",
+    "wandb>=0.23.0",
+]

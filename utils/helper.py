@@ -1,0 +1,324 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import random
+import shutil
+import subprocess
+import zipfile
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Any
+
+from PIL import Image
+
+
+def load_json(path: str | Path) -> Any:
+    with Path(path).open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(data: Any, path: str | Path, indent: int = 2) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=indent)
+        f.write("\n")
+
+
+def find_kaggle_dataset_slug(
+    metadata_paths: list[str | Path] | None = None,
+) -> str | None:
+    """Find a Kaggle dataset slug from env or common metadata files.
+
+    Expected slug format is "owner/dataset-name". Set KAGGLE_DATASET_SLUG on cloud
+    if the project metadata does not contain the dataset source.
+    """
+    env_slug = os.getenv("KAGGLE_DATASET_SLUG")
+    if env_slug:
+        return env_slug
+
+    paths = metadata_paths or ["kernel-metadata.json", "kaggle.yml"]
+    for path in paths:
+        candidate = Path(path)
+        if not candidate.exists():
+            continue
+        try:
+            if candidate.suffix == ".json":
+                data = load_json(candidate)
+                sources = data.get("dataset_sources") or data.get("datasets") or []
+                if sources:
+                    source = sources[0]
+                    if isinstance(source, str):
+                        return source.replace("kaggle/input/", "").strip("/")
+                    if isinstance(source, dict):
+                        return source.get("source") or source.get("slug") or source.get("dataset")
+            else:
+                text = candidate.read_text(encoding="utf-8")
+                for line in text.splitlines():
+                    stripped = line.strip().strip("'\"")
+                    if "/" in stripped and not stripped.startswith("#"):
+                        return stripped.lstrip("- ").strip("'\"")
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def split_kaggle_dataset_reference(reference: str) -> tuple[str, str | None]:
+    """Split owner/dataset[/file.zip] into a Kaggle slug and optional inner file."""
+    parts = reference.strip("/").split("/")
+    if len(parts) < 2:
+        raise ValueError("Kaggle dataset reference must look like owner/dataset-name.")
+    slug = "/".join(parts[:2])
+    inner_file = "/".join(parts[2:]) if len(parts) > 2 else None
+    return slug, inner_file
+
+
+def extract_zip(zip_path: Path, output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path) as archive:
+        archive.extractall(output_dir)
+
+
+def maybe_extract_nested_zip(extract_dir: Path, inner_file: str | None = None) -> Path:
+    """Return the directory containing dataset files, extracting nested zips if needed."""
+    if inner_file:
+        nested_zip = extract_dir / inner_file
+        if not nested_zip.exists():
+            matches = list(extract_dir.rglob(Path(inner_file).name))
+            if not matches:
+                raise FileNotFoundError(f"Could not find {inner_file} inside Kaggle dataset.")
+            nested_zip = matches[0]
+        if nested_zip.suffix.lower() != ".zip":
+            return nested_zip.parent
+        nested_extract_dir = extract_dir / "nested_extracted"
+        extract_zip(nested_zip, nested_extract_dir)
+        return nested_extract_dir
+
+    top_level_zips = [path for path in extract_dir.iterdir() if path.suffix.lower() == ".zip"]
+    top_level_dirs = [path for path in extract_dir.iterdir() if path.is_dir()]
+    if len(top_level_zips) == 1 and not top_level_dirs:
+        nested_extract_dir = extract_dir / "nested_extracted"
+        extract_zip(top_level_zips[0], nested_extract_dir)
+        return nested_extract_dir
+    return extract_dir
+
+
+def download_public_dataset_from_kaggle(
+    dataset_slug: str | None = None,
+    output_dir: str | Path = ".",
+    dataset_dir_name: str = "public",
+    force: bool = False,
+) -> Path:
+    """Download and extract the Kaggle public dataset into the current project.
+
+    Requires Kaggle credentials to be available through kaggle.json or the
+    KAGGLE_USERNAME/KAGGLE_KEY environment variables.
+    """
+    output_dir = Path(output_dir)
+    target_dir = output_dir / dataset_dir_name
+    if target_dir.exists() and not force:
+        print(f"Dataset already exists at {target_dir}. Use force=True to re-download.")
+        return target_dir
+
+    dataset_reference = dataset_slug or find_kaggle_dataset_slug()
+    if not dataset_reference:
+        raise ValueError(
+            "Missing Kaggle dataset slug. Pass dataset_slug='owner/dataset-name' "
+            "or set KAGGLE_DATASET_SLUG."
+        )
+    kaggle_slug, inner_file = split_kaggle_dataset_reference(dataset_reference)
+
+    if shutil.which("kaggle") is None:
+        raise RuntimeError(
+            "Kaggle CLI is not installed. Install it with `pip install kaggle` "
+            "and configure credentials before downloading."
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = output_dir / ".kaggle_download"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True)
+
+    command = [
+        "kaggle",
+        "datasets",
+        "download",
+        "-d",
+        kaggle_slug,
+        "-p",
+        str(tmp_dir),
+    ]
+    print(f"Downloading Kaggle dataset {kaggle_slug}...")
+    subprocess.run(command, check=True)
+
+    zip_files = sorted(tmp_dir.glob("*.zip"))
+    if not zip_files:
+        raise FileNotFoundError(f"Kaggle download did not create a zip file in {tmp_dir}.")
+
+    extract_dir = tmp_dir / "extracted"
+    extract_dir.mkdir()
+    extract_zip(zip_files[0], extract_dir)
+
+    dataset_source_dir = maybe_extract_nested_zip(extract_dir, inner_file)
+    extracted_public = dataset_source_dir / dataset_dir_name
+    if target_dir.exists():
+        shutil.rmtree(target_dir)
+    if extracted_public.exists():
+        shutil.move(str(extracted_public), str(target_dir))
+    else:
+        target_dir.mkdir(parents=True)
+        for item in dataset_source_dir.iterdir():
+            shutil.move(str(item), str(target_dir / item.name))
+
+    shutil.rmtree(tmp_dir)
+    print(f"Dataset ready at {target_dir}")
+    return target_dir
+
+
+def load_classes(path: str | Path = "public/classes.json") -> list[str]:
+    data = load_json(path)
+    if isinstance(data, dict) and "classes" in data:
+        return list(data["classes"])
+    return list(data)
+
+
+def build_class_maps(classes: list[str]) -> tuple[dict[str, int], dict[int, str]]:
+    """Return Faster R-CNN label maps. Label 0 is reserved for background."""
+    class_to_idx = {name: idx + 1 for idx, name in enumerate(classes)}
+    idx_to_class = {idx: name for name, idx in class_to_idx.items()}
+    return class_to_idx, idx_to_class
+
+
+def index_annotations(annotation: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    indexed: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for ann in annotation.get("annotations", []):
+        indexed[ann["image_id"]].append(ann)
+    return dict(indexed)
+
+
+def dataset_summary(annotation_path: str | Path) -> dict[str, Any]:
+    data = load_json(annotation_path)
+    class_counts = Counter(ann["class"] for ann in data.get("annotations", []))
+    boxes_per_image = Counter(ann["image_id"] for ann in data.get("annotations", []))
+    return {
+        "num_images": len(data.get("images", [])),
+        "num_annotations": len(data.get("annotations", [])),
+        "classes": data.get("classes", []),
+        "class_counts": dict(class_counts),
+        "images_without_boxes": len(data.get("images", [])) - len(boxes_per_image),
+        "max_boxes_per_image": max(boxes_per_image.values(), default=0),
+    }
+
+
+def resolve_image_path(image_dir: str | Path, image_id: str, file_name: str | None = None) -> Path:
+    image_dir = Path(image_dir)
+    candidates = [image_dir / image_id]
+    if file_name:
+        candidates.extend([image_dir / file_name, image_dir.parent / file_name])
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def draw_boxes(
+    image_path: str | Path,
+    boxes: list[dict[str, Any]],
+    output_path: str | Path | None = None,
+    title: str | None = None,
+    show: bool = False,
+) -> None:
+    """Draw ground-truth or prediction boxes for notebook/debug usage."""
+    import matplotlib.patches as patches
+    import matplotlib.pyplot as plt
+
+    image = Image.open(image_path).convert("RGB")
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.imshow(image)
+    ax.axis("off")
+    if title:
+        ax.set_title(title)
+
+    for box in boxes:
+        x1, y1, x2, y2 = [float(v) for v in box["bbox"]]
+        label = box.get("class", "object")
+        confidence = box.get("confidence")
+        caption = f"{label} {confidence:.2f}" if confidence is not None else label
+        rect = patches.Rectangle(
+            (x1, y1),
+            x2 - x1,
+            y2 - y1,
+            linewidth=2,
+            edgecolor="lime",
+            facecolor="none",
+        )
+        ax.add_patch(rect)
+        ax.text(
+            x1,
+            max(0, y1 - 4),
+            caption,
+            color="black",
+            fontsize=9,
+            bbox={"facecolor": "lime", "alpha": 0.8, "pad": 2},
+        )
+
+    if output_path:
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output, bbox_inches="tight", dpi=150)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def visualize_random_sample(
+    annotation_path: str | Path,
+    image_dir: str | Path,
+    output_path: str | Path = "debug_sample.jpg",
+    seed: int = 42,
+) -> Path:
+    data = load_json(annotation_path)
+    annotations = index_annotations(data)
+    rng = random.Random(seed)
+    image = rng.choice(data["images"])
+    boxes = annotations.get(image["id"], [])
+    image_path = resolve_image_path(image_dir, image["id"], image.get("file_name"))
+    draw_boxes(image_path, boxes, output_path, title=image["id"])
+    return Path(output_path)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Debug helpers for the OD dataset.")
+    parser.add_argument("--annotation", default="public/annotations/train.json")
+    parser.add_argument("--image_dir", default="public/train/images")
+    parser.add_argument("--output", default="debug_sample.jpg")
+    parser.add_argument("--download_dataset", action="store_true")
+    parser.add_argument("--dataset_slug", default=None, help="Kaggle dataset slug: owner/name.")
+    parser.add_argument("--dataset_output_dir", default=".")
+    parser.add_argument("--dataset_dir_name", default="public")
+    parser.add_argument("--force_download", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.download_dataset:
+        download_public_dataset_from_kaggle(
+            dataset_slug=args.dataset_slug,
+            output_dir=args.dataset_output_dir,
+            dataset_dir_name=args.dataset_dir_name,
+            force=args.force_download,
+        )
+        return
+
+    summary = dataset_summary(args.annotation)
+    print(json.dumps(summary, indent=2))
+    output = visualize_random_sample(args.annotation, args.image_dir, args.output)
+    print(f"Saved debug visualization to {output}")
+
+
+if __name__ == "__main__":
+    main()
