@@ -105,8 +105,78 @@ def maybe_extract_nested_zip(extract_dir: Path, inner_file: str | None = None) -
     return extract_dir
 
 
+def find_mounted_kaggle_file(dataset_reference: str) -> Path | None:
+    """Find an attached Kaggle dataset file under /kaggle/input when available."""
+    kaggle_input = Path("/kaggle/input")
+    if not kaggle_input.exists():
+        return None
+
+    kaggle_slug, inner_file = split_kaggle_dataset_reference(dataset_reference)
+    dataset_name = kaggle_slug.split("/", maxsplit=1)[1]
+    file_name = Path(inner_file).name if inner_file else None
+
+    candidates: list[Path] = []
+    if file_name:
+        candidates.extend(
+            [
+                kaggle_input / dataset_name / file_name,
+                kaggle_input / dataset_name.replace("_", "-") / file_name,
+                kaggle_input / dataset_name.replace("-", "_") / file_name,
+            ]
+        )
+        candidates.extend(kaggle_input.rglob(file_name))
+    else:
+        candidates.extend(
+            [
+                kaggle_input / dataset_name,
+                kaggle_input / dataset_name.replace("_", "-"),
+                kaggle_input / dataset_name.replace("-", "_"),
+            ]
+        )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def install_dataset_from_source(
+    source_path: Path,
+    target_dir: Path,
+    dataset_dir_name: str = "public",
+) -> Path:
+    """Install a dataset from a local zip or directory into target_dir."""
+    tmp_dir = target_dir.parent / ".kaggle_local_extract"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True)
+
+    try:
+        if source_path.is_dir():
+            dataset_source_dir = source_path
+        else:
+            extract_dir = tmp_dir / "extracted"
+            extract_zip(source_path, extract_dir)
+            dataset_source_dir = maybe_extract_nested_zip(extract_dir)
+
+        extracted_public = dataset_source_dir / dataset_dir_name
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        if extracted_public.exists():
+            shutil.copytree(extracted_public, target_dir)
+        else:
+            shutil.copytree(dataset_source_dir, target_dir)
+    finally:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+
+    print(f"Dataset ready at {target_dir}")
+    return target_dir
+
+
 def download_public_dataset_from_kaggle(
     dataset_slug: str | None = None,
+    local_zip: str | Path | None = None,
     output_dir: str | Path = ".",
     dataset_dir_name: str = "public",
     force: bool = False,
@@ -121,6 +191,9 @@ def download_public_dataset_from_kaggle(
     if target_dir.exists() and not force:
         print(f"Dataset already exists at {target_dir}. Use force=True to re-download.")
         return target_dir
+
+    if local_zip is not None:
+        return install_dataset_from_source(Path(local_zip), target_dir, dataset_dir_name)
 
     dataset_reference = dataset_slug or find_kaggle_dataset_slug()
     if not dataset_reference:
@@ -152,7 +225,20 @@ def download_public_dataset_from_kaggle(
         str(tmp_dir),
     ]
     print(f"Downloading Kaggle dataset {kaggle_slug}...")
-    subprocess.run(command, check=True)
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as error:
+        mounted_file = find_mounted_kaggle_file(dataset_reference)
+        if mounted_file is not None:
+            print(f"Kaggle API failed, using mounted dataset file: {mounted_file}")
+            shutil.rmtree(tmp_dir)
+            return install_dataset_from_source(mounted_file, target_dir, dataset_dir_name)
+        raise RuntimeError(
+            "Kaggle refused the dataset download. Common fixes: make the dataset public, "
+            "use a kaggle.json token from an account that can access it, or attach the "
+            "dataset to a Kaggle notebook and pass "
+            "`--local_zip /kaggle/input/<dataset>/final_public.zip`."
+        ) from error
 
     zip_files = sorted(tmp_dir.glob("*.zip"))
     if not zip_files:
@@ -297,6 +383,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default="debug_sample.jpg")
     parser.add_argument("--download_dataset", action="store_true")
     parser.add_argument("--dataset_slug", default=None, help="Kaggle dataset slug: owner/name.")
+    parser.add_argument(
+        "--local_zip",
+        default=None,
+        help="Local dataset zip, e.g. /kaggle/input/<dataset>/final_public.zip.",
+    )
     parser.add_argument("--dataset_output_dir", default=".")
     parser.add_argument("--dataset_dir_name", default="public")
     parser.add_argument("--force_download", action="store_true")
@@ -308,6 +399,7 @@ def main() -> None:
     if args.download_dataset:
         download_public_dataset_from_kaggle(
             dataset_slug=args.dataset_slug,
+            local_zip=args.local_zip,
             output_dir=args.dataset_output_dir,
             dataset_dir_name=args.dataset_dir_name,
             force=args.force_download,

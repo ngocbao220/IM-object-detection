@@ -10,6 +10,7 @@ set -euo pipefail
 #   bash script.sh all
 
 KAGGLE_DATASET_SLUG="${KAGGLE_DATASET_SLUG:-ngocbao/object_detection/final_public.zip}"
+LOCAL_DATASET_ZIP="${LOCAL_DATASET_ZIP:-}"
 
 TRAIN_DATA="${TRAIN_DATA:-./public/annotations/train.json}"
 VAL_DATA="${VAL_DATA:-./public/annotations/val.json}"
@@ -36,9 +37,15 @@ install() {
 }
 
 download() {
-  python utils/helper.py \
-    --download_dataset \
-    --dataset_slug "${KAGGLE_DATASET_SLUG}"
+  if [[ -n "${LOCAL_DATASET_ZIP}" ]]; then
+    python utils/helper.py \
+      --download_dataset \
+      --local_zip "${LOCAL_DATASET_ZIP}"
+  else
+    python utils/helper.py \
+      --download_dataset \
+      --dataset_slug "${KAGGLE_DATASET_SLUG}"
+  fi
 }
 
 train() {
