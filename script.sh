@@ -68,7 +68,7 @@ train() {
     --batch_size "${BATCH_SIZE}" \
     --num_workers "${NUM_WORKERS}" \
     --lr "${LR}" \
-    --use_wandb \
+    # --use_wandb \
     "${gpu_args[@]}"
 }
 
