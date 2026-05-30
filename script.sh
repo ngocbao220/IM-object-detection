@@ -29,6 +29,8 @@ NUM_WORKERS="${NUM_WORKERS:-4}"
 LR="${LR:-0.005}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
+GPU="${GPU:-}"
+GPUS="${GPUS:-}"
 
 install() {
   python -m pip install --upgrade pip
@@ -49,6 +51,13 @@ download() {
 }
 
 train() {
+  gpu_args=()
+  if [[ -n "${GPUS}" ]]; then
+    gpu_args+=(--gpus "${GPUS}")
+  elif [[ -n "${GPU}" ]]; then
+    gpu_args+=(--gpu "${GPU}")
+  fi
+
   python train.py \
     --train_data "${TRAIN_DATA}" \
     --val_data "${VAL_DATA}" \
@@ -59,7 +68,8 @@ train() {
     --batch_size "${BATCH_SIZE}" \
     --num_workers "${NUM_WORKERS}" \
     --lr "${LR}" \
-    --use_wandb 
+    --use_wandb \
+    "${gpu_args[@]}"
 }
 
 predict() {

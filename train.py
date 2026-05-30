@@ -3,14 +3,20 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import platform
+import subprocess
+import sys
 import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from tqdm.auto import tqdm
 
 try:
@@ -40,6 +46,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight_decay", type=float, default=0.0005)
     parser.add_argument("--score_threshold", type=float, default=0.05)
     parser.add_argument("--device", default=None)
+    parser.add_argument("--gpu", type=int, default=None, help="Use one CUDA GPU, e.g. --gpu 0.")
+    parser.add_argument("--gpus", default=None, help="Use multiple CUDA GPUs with DDP, e.g. --gpus 0,1.")
+    parser.add_argument("--distributed", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--pretrained_backbone", action="store_true")
     parser.add_argument("--pretrained_coco", action="store_true")
     parser.add_argument("--wandb_project", default="object-detection-final")
@@ -49,16 +58,77 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def maybe_launch_distributed(args: argparse.Namespace) -> None:
+    if not args.gpus or args.distributed:
+        return
+    gpu_ids = [value.strip() for value in args.gpus.split(",") if value.strip()]
+    if len(gpu_ids) < 2:
+        raise ValueError("--gpus requires at least two GPU ids, e.g. --gpus 0,1.")
+
+    child_args = []
+    skip_next = False
+    for value in sys.argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if value == "--gpus":
+            skip_next = True
+            continue
+        if value.startswith("--gpus="):
+            continue
+        child_args.append(value)
+
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = ",".join(gpu_ids)
+    command = [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        "--nproc_per_node",
+        str(len(gpu_ids)),
+        str(Path(__file__).resolve()),
+        *child_args,
+        "--distributed",
+    ]
+    print(f"Launching DDP training on GPUs: {', '.join(gpu_ids)}")
+    subprocess.run(command, env=env, check=True)
+    raise SystemExit(0)
+
+
+def setup_device(args: argparse.Namespace) -> tuple[torch.device, int, int]:
+    if args.distributed:
+        if not torch.cuda.is_available():
+            raise RuntimeError("--gpus requires CUDA-enabled PyTorch and NVIDIA GPUs.")
+        dist.init_process_group(backend="nccl")
+        local_rank = int(os.environ["LOCAL_RANK"])
+        torch.cuda.set_device(local_rank)
+        return torch.device(f"cuda:{local_rank}"), dist.get_rank(), dist.get_world_size()
+
+    if args.gpu is not None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("--gpu requires CUDA-enabled PyTorch and an NVIDIA GPU.")
+        torch.cuda.set_device(args.gpu)
+        return torch.device(f"cuda:{args.gpu}"), 0, 1
+
+    return get_device(args.device), 0, 1
+
+
+def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+    return model.module if isinstance(model, DistributedDataParallel) else model
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     epoch: int,
+    is_main_process: bool = True,
 ) -> dict[str, float]:
     model.train()
     totals: dict[str, float] = {}
-    progress = tqdm(loader, desc=f"train epoch {epoch}", leave=False)
+    progress = tqdm(loader, desc=f"train epoch {epoch}", leave=False, disable=not is_main_process)
 
     for images, targets in progress:
         images = [image.to(device) for image in images]
@@ -77,6 +147,12 @@ def train_one_epoch(
             totals[key] = totals.get(key, 0.0) + value
         progress.set_postfix(loss=f"{batch_logs['loss']:.4f}")
 
+    if dist.is_initialized():
+        keys = sorted(totals)
+        values = torch.tensor([totals[key] for key in keys] + [len(loader)], device=device)
+        dist.all_reduce(values, op=dist.ReduceOp.SUM)
+        total_batches = max(float(values[-1]), 1.0)
+        return {key: float(values[index]) / total_batches for index, key in enumerate(keys)}
     return {key: value / max(len(loader), 1) for key, value in totals.items()}
 
 
@@ -192,6 +268,11 @@ def print_session_info(info: dict[str, Any]) -> None:
     print("\n========== Training Session ==========")
     print(f"Started: {info['started_at']}")
     print(f"Device: {info['device']['selected_device']}")
+    if info["distributed"]["world_size"] > 1:
+        print(
+            f"Distributed: DDP with {info['distributed']['world_size']} processes "
+            f"on GPUs {info['distributed']['gpus']}"
+        )
     if "cuda_device_name" in info["device"]:
         print(
             "CUDA: "
@@ -233,6 +314,10 @@ def print_session_info(info: dict[str, Any]) -> None:
 
 def main() -> None:
     args = parse_args()
+    maybe_launch_distributed(args)
+    device, rank, world_size = setup_device(args)
+    is_main_process = rank == 0
+
     checkpoint_dir = Path(args.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log_dir = checkpoint_dir / "logs"
@@ -240,10 +325,12 @@ def main() -> None:
 
     train_dataset = OdDataset(args.train_data, args.image_dir)
     val_dataset = OdDataset(args.val_data, args.val_image_dir, classes=train_dataset.classes)
+    train_sampler = DistributedSampler(train_dataset, shuffle=True) if world_size > 1 else None
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=train_sampler is None,
+        sampler=train_sampler,
         num_workers=args.num_workers,
         collate_fn=collate_fn,
     )
@@ -255,12 +342,13 @@ def main() -> None:
         collate_fn=collate_fn,
     )
 
-    device = get_device(args.device)
     model = create_faster_rcnn_resnet50(
         num_classes=len(train_dataset.classes) + 1,
         pretrained_backbone=args.pretrained_backbone,
         pretrained_coco=args.pretrained_coco,
     ).to(device)
+    if world_size > 1:
+        model = DistributedDataParallel(model, device_ids=[device.index])
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
@@ -281,6 +369,7 @@ def main() -> None:
             "val": count_dataset_boxes(val_dataset),
         },
         "device": get_device_info(device),
+        "distributed": {"world_size": world_size, "rank": rank, "gpus": args.gpus},
         "model": count_parameters(model),
         "hyperparameters": {
             "epochs": args.epochs,
@@ -304,11 +393,12 @@ def main() -> None:
         },
     }
     session_info_path = log_dir / f"session-{started}.json"
-    save_json(session_info, session_info_path)
-    print_session_info(session_info)
+    if is_main_process:
+        save_json(session_info, session_info_path)
+        print_session_info(session_info)
 
     run = None
-    if args.use_wandb:
+    if args.use_wandb and is_main_process:
         if wandb is None:
             print("wandb is not installed; continuing without wandb.")
         else:
@@ -323,63 +413,70 @@ def main() -> None:
     csv_path = log_dir / f"train-{started}.csv"
 
     for epoch in range(1, args.epochs + 1):
-        train_logs = train_one_epoch(model, train_loader, optimizer, device, epoch)
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
+        train_logs = train_one_epoch(model, train_loader, optimizer, device, epoch, is_main_process)
         scheduler.step()
 
-        val_predictions = predict_dataset(
-            model,
-            val_dataset,
-            val_loader,
-            device,
-            score_threshold=args.score_threshold,
-            max_images=args.eval_max_images,
-        )
-        val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
-        val_metrics = evaluate_map(val_gt, val_predictions, val_dataset.classes)
+        if is_main_process:
+            val_predictions = predict_dataset(
+                unwrap_model(model),
+                val_dataset,
+                val_loader,
+                device,
+                score_threshold=args.score_threshold,
+                max_images=args.eval_max_images,
+            )
+            val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
+            val_metrics = evaluate_map(val_gt, val_predictions, val_dataset.classes)
 
-        row = {
-            "epoch": epoch,
-            "lr": optimizer.param_groups[0]["lr"],
-            **{f"train/{k}": v for k, v in train_logs.items()},
-            "val/mAP@0.5": val_metrics["mAP@0.5"],
-            "val/micro_precision": val_metrics["micro_precision"],
-            "val/micro_recall": val_metrics["micro_recall"],
-        }
-        append_csv(csv_path, row)
-        with jsonl_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row) + "\n")
-        if run is not None:
-            wandb.log(row, step=epoch)
+            row = {
+                "epoch": epoch,
+                "lr": optimizer.param_groups[0]["lr"],
+                **{f"train/{k}": v for k, v in train_logs.items()},
+                "val/mAP@0.5": val_metrics["mAP@0.5"],
+                "val/micro_precision": val_metrics["micro_precision"],
+                "val/micro_recall": val_metrics["micro_recall"],
+            }
+            append_csv(csv_path, row)
+            with jsonl_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row) + "\n")
+            if run is not None:
+                wandb.log(row, step=epoch)
 
-        save_json(val_metrics, log_dir / f"metrics_epoch_{epoch}.json")
-        save_checkpoint(
-            checkpoint_dir / "last_model.pth",
-            model,
-            optimizer,
-            epoch,
-            train_dataset.classes,
-            val_metrics,
-        )
-        if val_metrics["mAP@0.5"] > best_map:
-            best_map = val_metrics["mAP@0.5"]
+            save_json(val_metrics, log_dir / f"metrics_epoch_{epoch}.json")
             save_checkpoint(
-                checkpoint_dir / "best_model.pth",
-                model,
+                checkpoint_dir / "last_model.pth",
+                unwrap_model(model),
                 optimizer,
                 epoch,
                 train_dataset.classes,
                 val_metrics,
             )
+            if val_metrics["mAP@0.5"] > best_map:
+                best_map = val_metrics["mAP@0.5"]
+                save_checkpoint(
+                    checkpoint_dir / "best_model.pth",
+                    unwrap_model(model),
+                    optimizer,
+                    epoch,
+                    train_dataset.classes,
+                    val_metrics,
+                )
 
-        print(
-            f"epoch={epoch} loss={train_logs.get('loss', 0):.4f} "
-            f"mAP@0.5={val_metrics['mAP@0.5']:.4f} "
-            f"precision={val_metrics['micro_precision']:.4f} "
-            f"recall={val_metrics['micro_recall']:.4f}"
-        )
+            print(
+                f"epoch={epoch} loss={train_logs.get('loss', 0):.4f} "
+                f"mAP@0.5={val_metrics['mAP@0.5']:.4f} "
+                f"precision={val_metrics['micro_precision']:.4f} "
+                f"recall={val_metrics['micro_recall']:.4f}"
+            )
+        if dist.is_initialized():
+            dist.barrier()
 
     if run is not None:
         run.finish()
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
