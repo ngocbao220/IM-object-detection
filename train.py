@@ -37,7 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val_data", required=True)
     parser.add_argument("--image_dir", required=True)
     parser.add_argument("--val_image_dir", required=True)
-    parser.add_argument("--checkpoint_dir", required=True)
+    parser.add_argument("--saved_results_dir", default="./saved_results")
+    parser.add_argument("--checkpoint_dir", default=None, help="Deprecated alias for --saved_results_dir.")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--num_workers", type=int, default=2)
@@ -145,6 +146,41 @@ def train_one_epoch(
 
 
 @torch.no_grad()
+def compute_validation_loss(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    max_images: int = 0,
+) -> dict[str, float]:
+    """Compute Faster R-CNN validation losses without optimizer updates."""
+    model.train()
+    totals: dict[str, float] = {}
+    num_batches = 0
+    num_images = 0
+
+    progress = tqdm(loader, desc="val loss", leave=False)
+    for images, targets in progress:
+        images = [image.to(device) for image in images]
+        targets = move_targets_to_device(list(targets), device)
+        loss_dict = model(images, targets)
+        losses = sum(loss for loss in loss_dict.values())
+
+        batch_logs = {"loss": float(losses.detach().cpu())}
+        batch_logs.update({key: float(value.detach().cpu()) for key, value in loss_dict.items()})
+        for key, value in batch_logs.items():
+            totals[key] = totals.get(key, 0.0) + value
+
+        num_batches += 1
+        num_images += len(images)
+        progress.set_postfix(loss=f"{batch_logs['loss']:.4f}")
+        if max_images and num_images >= max_images:
+            break
+
+    model.eval()
+    return {key: value / max(num_batches, 1) for key, value in totals.items()}
+
+
+@torch.no_grad()
 def predict_dataset(
     model: torch.nn.Module,
     dataset: OdDataset,
@@ -204,6 +240,46 @@ def append_csv(path: Path, row: dict[str, Any]) -> None:
         if not exists:
             writer.writeheader()
         writer.writerow(row)
+
+
+def format_epoch_summary(
+    epoch: int,
+    total_epochs: int,
+    train_logs: dict[str, float],
+    val_logs: dict[str, float],
+    val_metrics: dict[str, Any],
+    lr: float,
+    elapsed_seconds: float,
+) -> str:
+    loss_keys = ["loss_classifier", "loss_box_reg", "loss_objectness", "loss_rpn_box_reg"]
+    lines = [
+        f"Epoch [{epoch:02d}/{total_epochs:02d}]",
+        f"├── Train Loss : {train_logs.get('loss', 0.0):.4f}",
+    ]
+    for index, key in enumerate(loss_keys):
+        branch = "└──" if index == len(loss_keys) - 1 else "├──"
+        lines.append(f"│   {branch} {key:<17}: {train_logs.get(key, 0.0):.4f}")
+
+    lines.extend(
+        [
+            f"├── Val Loss   : {val_logs.get('loss', 0.0):.4f}",
+            f"├── mAP@0.5    : {val_metrics['mAP@0.5']:.4f}",
+            f"├── Precision  : {val_metrics['micro_precision']:.4f}",
+            f"├── Recall     : {val_metrics['micro_recall']:.4f}",
+            f"├── GT Boxes   : {val_metrics['num_ground_truth_boxes']}",
+            f"├── Predictions: {val_metrics['num_predictions']}",
+            "├── Per-class AP",
+        ]
+    )
+    per_class = val_metrics["per_class"]
+    for index, (class_name, metrics) in enumerate(per_class.items()):
+        branch = "└──" if index == len(per_class) - 1 else "├──"
+        lines.append(
+            f"│   {branch} {class_name:<8}: AP={metrics['ap']:.4f}, "
+            f"P={metrics['precision']:.4f}, R={metrics['recall']:.4f}"
+        )
+    lines.extend([f"├── LR         : {lr:.6f}", f"└── Time       : {elapsed_seconds:.1f}s"])
+    return "\n".join(lines)
 
 
 def count_dataset_boxes(dataset: OdDataset) -> dict[str, Any]:
@@ -295,6 +371,7 @@ def print_session_info(info: dict[str, Any]) -> None:
         f"lr={info['hyperparameters']['lr']}, "
         f"num_workers={info['hyperparameters']['num_workers']}"
     )
+    print(f"Saved results dir: {info['paths']['saved_results_dir']}")
     print(f"Checkpoint dir: {info['paths']['checkpoint_dir']}")
     print(f"Log dir: {info['paths']['log_dir']}")
     print("=====================================\n")
@@ -306,10 +383,13 @@ def main() -> None:
     device, rank, world_size = setup_device(args)
     is_main_process = rank == 0
 
-    checkpoint_dir = Path(args.checkpoint_dir)
+    saved_results_dir = Path(args.checkpoint_dir or args.saved_results_dir)
+    checkpoint_dir = saved_results_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    log_dir = checkpoint_dir / "logs"
+    log_dir = saved_results_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+    metrics_dir = saved_results_dir / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
 
     train_dataset = OdDataset(args.train_data, args.image_dir)
     val_dataset = OdDataset(args.val_data, args.val_image_dir, classes=train_dataset.classes)
@@ -376,8 +456,10 @@ def main() -> None:
             "val_data": str(Path(args.val_data)),
             "image_dir": str(Path(args.image_dir)),
             "val_image_dir": str(Path(args.val_image_dir)),
+            "saved_results_dir": str(saved_results_dir),
             "checkpoint_dir": str(checkpoint_dir),
             "log_dir": str(log_dir),
+            "metrics_dir": str(metrics_dir),
         },
     }
     session_info_path = log_dir / f"session-{started}.json"
@@ -399,14 +481,22 @@ def main() -> None:
     best_map = -1.0
     jsonl_path = log_dir / f"train-{started}.jsonl"
     csv_path = log_dir / f"train-{started}.csv"
+    text_log_path = log_dir / f"train-{started}.log"
 
     for epoch in range(1, args.epochs + 1):
+        epoch_started = time.perf_counter()
+        current_lr = optimizer.param_groups[0]["lr"]
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
         train_logs = train_one_epoch(model, train_loader, optimizer, device, epoch, is_main_process)
-        scheduler.step()
 
         if is_main_process:
+            val_logs = compute_validation_loss(
+                unwrap_model(model),
+                val_loader,
+                device,
+                max_images=args.eval_max_images,
+            )
             val_predictions = predict_dataset(
                 unwrap_model(model),
                 val_dataset,
@@ -417,11 +507,14 @@ def main() -> None:
             )
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
             val_metrics = evaluate_map(val_gt, val_predictions, val_dataset.classes)
+            epoch_seconds = time.perf_counter() - epoch_started
 
             row = {
                 "epoch": epoch,
-                "lr": optimizer.param_groups[0]["lr"],
+                "lr": current_lr,
+                "time_seconds": epoch_seconds,
                 **{f"train/{k}": v for k, v in train_logs.items()},
+                **{f"val/{k}": v for k, v in val_logs.items()},
                 "val/mAP@0.5": val_metrics["mAP@0.5"],
                 "val/micro_precision": val_metrics["micro_precision"],
                 "val/micro_recall": val_metrics["micro_recall"],
@@ -432,14 +525,15 @@ def main() -> None:
             if run is not None:
                 wandb.log(row, step=epoch)
 
-            save_json(val_metrics, log_dir / f"metrics_epoch_{epoch}.json")
+            epoch_metrics = {"epoch": epoch, "train": train_logs, "val": val_logs, **val_metrics}
+            save_json(epoch_metrics, metrics_dir / f"epoch_{epoch:03d}.json")
             save_checkpoint(
                 checkpoint_dir / "last_model.pth",
                 unwrap_model(model),
                 optimizer,
                 epoch,
                 train_dataset.classes,
-                val_metrics,
+                epoch_metrics,
             )
             if val_metrics["mAP@0.5"] > best_map:
                 best_map = val_metrics["mAP@0.5"]
@@ -449,15 +543,22 @@ def main() -> None:
                     optimizer,
                     epoch,
                     train_dataset.classes,
-                    val_metrics,
+                    epoch_metrics,
                 )
 
-            print(
-                f"epoch={epoch} loss={train_logs.get('loss', 0):.4f} "
-                f"mAP@0.5={val_metrics['mAP@0.5']:.4f} "
-                f"precision={val_metrics['micro_precision']:.4f} "
-                f"recall={val_metrics['micro_recall']:.4f}"
+            epoch_summary = format_epoch_summary(
+                epoch,
+                args.epochs,
+                train_logs,
+                val_logs,
+                val_metrics,
+                current_lr,
+                epoch_seconds,
             )
+            print(f"\n{epoch_summary}\n")
+            with text_log_path.open("a", encoding="utf-8") as f:
+                f.write(epoch_summary + "\n\n")
+        scheduler.step()
         if dist.is_initialized():
             dist.barrier()
 

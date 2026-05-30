@@ -16,21 +16,22 @@ TRAIN_DATA="${TRAIN_DATA:-./public/annotations/train.json}"
 VAL_DATA="${VAL_DATA:-./public/annotations/val.json}"
 TRAIN_IMAGE_DIR="${TRAIN_IMAGE_DIR:-./public/train/images}"
 VAL_IMAGE_DIR="${VAL_IMAGE_DIR:-./public/val/images}"
-CHECKPOINT_DIR="${CHECKPOINT_DIR:-./models}"
-CHECKPOINT="${CHECKPOINT:-./models/best_model.pth}"
+SAVED_RESULTS_DIR="${SAVED_RESULTS_DIR:-./saved_results}"
+CHECKPOINT="${CHECKPOINT:-${SAVED_RESULTS_DIR}/checkpoints/best_model.pth}"
 
 PREDICT_IMAGE_DIR="${PREDICT_IMAGE_DIR:-./public/val/images}"
-PREDICTIONS_OUTPUT="${PREDICTIONS_OUTPUT:-./predictions.json}"
-EVAL_OUTPUT="${EVAL_OUTPUT:-./evaluation.json}"
+PREDICTIONS_OUTPUT="${PREDICTIONS_OUTPUT:-${SAVED_RESULTS_DIR}/predictions.json}"
+EVAL_OUTPUT="${EVAL_OUTPUT:-${SAVED_RESULTS_DIR}/evaluation.json}"
 
 EPOCHS="${EPOCHS:-100}"
-BATCH_SIZE="${BATCH_SIZE:-128}"
-NUM_WORKERS="${NUM_WORKERS:-4}"
+BATCH_SIZE="${BATCH_SIZE:-64}"
+NUM_WORKERS="${NUM_WORKERS:-2}"
 LR="${LR:-0.005}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 GPU="${GPU:-}"
 GPUS="${GPUS:-}"
+USE_WANDB="${USE_WANDB:-0}"
 
 install() {
   python -m pip install --upgrade pip
@@ -51,25 +52,29 @@ download() {
 }
 
 train() {
-  gpu_args=()
+  train_args=(
+    --train_data "${TRAIN_DATA}"
+    --val_data "${VAL_DATA}"
+    --image_dir "${TRAIN_IMAGE_DIR}"
+    --val_image_dir "${VAL_IMAGE_DIR}"
+    --saved_results_dir "${SAVED_RESULTS_DIR}"
+    --epochs "${EPOCHS}"
+    --batch_size "${BATCH_SIZE}"
+    --num_workers "${NUM_WORKERS}"
+    --lr "${LR}"
+  )
+
   if [[ -n "${GPUS}" ]]; then
-    gpu_args+=(--gpus "${GPUS}")
+    train_args+=(--gpus "${GPUS}")
   elif [[ -n "${GPU}" ]]; then
-    gpu_args+=(--gpu "${GPU}")
+    train_args+=(--gpu "${GPU}")
   fi
 
-  python train.py \
-    --train_data "${TRAIN_DATA}" \
-    --val_data "${VAL_DATA}" \
-    --image_dir "${TRAIN_IMAGE_DIR}" \
-    --val_image_dir "${VAL_IMAGE_DIR}" \
-    --checkpoint_dir "${CHECKPOINT_DIR}" \
-    --epochs "${EPOCHS}" \
-    --batch_size "${BATCH_SIZE}" \
-    --num_workers "${NUM_WORKERS}" \
-    --lr "${LR}" \
-    # --use_wandb \
-    "${gpu_args[@]}"
+  if [[ "${USE_WANDB}" == "1" ]]; then
+    train_args+=(--use_wandb)
+  fi
+
+  python train.py "${train_args[@]}"
 }
 
 predict() {

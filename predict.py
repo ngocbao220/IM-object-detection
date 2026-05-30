@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Faster R-CNN inference.")
     parser.add_argument("--image_dir", required=True, help="Image file or directory.")
     parser.add_argument("--output", required=True, help="Output predictions.json path.")
-    parser.add_argument("--checkpoint", default="models/best_model.pth")
+    parser.add_argument("--checkpoint", default="saved_results/checkpoints/best_model.pth")
     parser.add_argument("--classes", default="public/classes.json")
     parser.add_argument("--score_threshold", type=float, default=0.5)
     parser.add_argument("--device", default=None)
