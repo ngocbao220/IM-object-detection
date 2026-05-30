@@ -360,6 +360,242 @@ def resolve_image_path(image_dir: str | Path, image_id: str, file_name: str | No
     return candidates[0]
 
 
+def resolve_public_data_root(data_root: str | Path | None = None) -> Path:
+    """Find the public dataset directory from common notebook working directories."""
+    candidates = []
+    if data_root is not None:
+        candidates.append(Path(data_root))
+    candidates.extend(
+        [
+            Path("public"),
+            Path("../public"),
+            Path.cwd() / "public",
+            Path.cwd().parent / "public",
+        ]
+    )
+    for candidate in candidates:
+        candidate = candidate.expanduser().resolve()
+        if (candidate / "annotations").exists() and (candidate / "train").exists():
+            return candidate
+    raise FileNotFoundError("Could not find public dataset directory. Pass data_root explicitly.")
+
+
+def normalize_split(folder: str | Path) -> str:
+    split = Path(str(folder).strip().rstrip("/")).name.lower()
+    if split not in {"train", "val"}:
+        raise ValueError("folder must be 'train', 'val', or a path ending with train/val.")
+    return split
+
+
+def load_split_annotations(
+    folder: str | Path = "train",
+    data_root: str | Path | None = None,
+) -> tuple[Path, str, dict[str, Any], dict[str, dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """Load one public split in a notebook-friendly indexed format."""
+    root = resolve_public_data_root(data_root)
+    split = normalize_split(folder)
+    data = load_json(root / "annotations" / f"{split}.json")
+    images = {image["id"]: image for image in data["images"]}
+    return root, split, data, images, index_annotations(data)
+
+
+def bbox_xyxy(bbox: list[float]) -> tuple[float, float, float, float]:
+    return tuple(float(value) for value in bbox)  # type: ignore[return-value]
+
+
+def bbox_wh(bbox: list[float]) -> tuple[float, float]:
+    x1, y1, x2, y2 = bbox_xyxy(bbox)
+    return max(0.0, x2 - x1), max(0.0, y2 - y1)
+
+
+def bbox_area(bbox: list[float]) -> float:
+    width, height = bbox_wh(bbox)
+    return width * height
+
+
+def bbox_iou(box_a: list[float], box_b: list[float]) -> float:
+    ax1, ay1, ax2, ay2 = bbox_xyxy(box_a)
+    bx1, by1, bx2, by2 = bbox_xyxy(box_b)
+    intersection = bbox_area(
+        [max(ax1, bx1), max(ay1, by1), min(ax2, bx2), min(ay2, by2)]
+    )
+    union = bbox_area(box_a) + bbox_area(box_b) - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def bbox_center_x(annotation: dict[str, Any]) -> float:
+    x1, _, x2, _ = bbox_xyxy(annotation["bbox"])
+    return (x1 + x2) / 2
+
+
+def bbox_center_y(annotation: dict[str, Any]) -> float:
+    _, y1, _, y2 = bbox_xyxy(annotation["bbox"])
+    return (y1 + y2) / 2
+
+
+def draw_boxes_on_axis(
+    ax: Any,
+    image_path: str | Path,
+    boxes: list[dict[str, Any]],
+    classes: list[str] | None = None,
+    title: str | None = None,
+    label_prefix: str = "",
+    edge_color: str | None = None,
+    line_style: str = "-",
+    label_position: str = "top_left",
+) -> Any:
+    """Draw ground-truth or prediction boxes on an existing matplotlib axis."""
+    import matplotlib.pyplot as plt
+
+    image = Image.open(image_path).convert("RGB")
+    ax.imshow(image)
+    ax.axis("off")
+    if title:
+        ax.set_title(title)
+
+    cmap = plt.get_cmap("tab10")
+    class_to_idx = {name: index for index, name in enumerate(classes or [])}
+    for box in boxes:
+        x1, y1, x2, y2 = bbox_xyxy(box["bbox"])
+        class_name = box.get("class", "object")
+        confidence = box.get("confidence", box.get("score"))
+        label = f"{class_name} {float(confidence):.2f}" if confidence is not None else class_name
+        label = f"{label_prefix}{label}"
+        color = edge_color or cmap(class_to_idx.get(class_name, 0) % 10)
+        rect = plt.Rectangle(
+            (x1, y1),
+            x2 - x1,
+            y2 - y1,
+            fill=False,
+            linewidth=2,
+            edgecolor=color,
+            linestyle=line_style,
+        )
+        ax.add_patch(rect)
+        if label_position == "top_left":
+            label_x, label_y = x1, max(0, y1 - 4)
+            horizontal_alignment = "left"
+            vertical_alignment = "bottom"
+        elif label_position == "bottom_right":
+            label_x, label_y = x2, y2
+            horizontal_alignment = "right"
+            vertical_alignment = "top"
+        else:
+            raise ValueError("label_position must be 'top_left' or 'bottom_right'.")
+        ax.text(
+            label_x,
+            label_y,
+            label,
+            color="white",
+            fontsize=9,
+            horizontalalignment=horizontal_alignment,
+            verticalalignment=vertical_alignment,
+            bbox={"facecolor": color, "alpha": 0.85, "edgecolor": "none", "pad": 2},
+        )
+    return ax
+
+
+def browse_boxes_with_slider(
+    image_ids: list[str],
+    boxes_by_image: dict[str, list[dict[str, Any]]],
+    image_dir: str | Path,
+    classes: list[str] | None = None,
+    title_prefix: str = "",
+    overlay_boxes_by_image: dict[str, list[dict[str, Any]]] | None = None,
+    overlay_label_prefix: str = "GT: ",
+) -> Any:
+    """Browse detection boxes with the same slider UI for ground truth and predictions."""
+    import matplotlib.pyplot as plt
+
+    try:
+        import ipywidgets as widgets
+        from IPython.display import display
+    except ImportError as error:
+        raise RuntimeError("Install ipywidgets to use the notebook slider viewer.") from error
+
+    if not image_ids:
+        raise ValueError("No images available for slider viewer.")
+
+    output = widgets.Output()
+    slider = widgets.IntSlider(
+        value=0,
+        min=0,
+        max=len(image_ids) - 1,
+        step=1,
+        description="Index",
+        continuous_update=False,
+    )
+
+    def render(index: int) -> None:
+        image_id = image_ids[index]
+        boxes = boxes_by_image.get(image_id, [])
+        overlay_boxes = (overlay_boxes_by_image or {}).get(image_id, [])
+        with output:
+            output.clear_output(wait=True)
+            fig, ax = plt.subplots(figsize=(9, 7))
+            draw_boxes_on_axis(
+                ax,
+                resolve_image_path(image_dir, image_id),
+                boxes,
+                classes=classes,
+                title=f"{title_prefix}{image_id} - {len(boxes)} boxes",
+            )
+            if overlay_boxes:
+                draw_boxes_on_axis(
+                    ax,
+                    resolve_image_path(image_dir, image_id),
+                    overlay_boxes,
+                    classes=classes,
+                    label_prefix=overlay_label_prefix,
+                    edge_color="black",
+                    line_style="--",
+                    label_position="bottom_right",
+                )
+            plt.show()
+            plt.close(fig)
+
+    slider.observe(lambda change: render(change["new"]), names="value")
+    render(0)
+    display(widgets.VBox([slider, output]))
+    return slider
+
+
+def show_groundtruth_slider(
+    folder: str | Path = "train",
+    data_root: str | Path | None = None,
+) -> Any:
+    root, split, data, images, annotations_by_image = load_split_annotations(folder, data_root)
+    return browse_boxes_with_slider(
+        list(images),
+        annotations_by_image,
+        root / split / "images",
+        classes=data["classes"],
+        title_prefix=f"{split}/ground-truth/",
+    )
+
+
+def show_predictions_slider(
+    predictions_path: str | Path,
+    image_dir: str | Path = "public/val/images",
+    classes_path: str | Path = "public/classes.json",
+    show_ground_truth: bool = False,
+    ground_truth_path: str | Path = "public/annotations/val.json",
+) -> Any:
+    predictions = load_json(predictions_path)
+    boxes_by_image = {item["image_id"]: item.get("boxes", []) for item in predictions}
+    ground_truth_by_image = None
+    if show_ground_truth:
+        ground_truth_by_image = index_annotations(load_json(ground_truth_path))
+    return browse_boxes_with_slider(
+        list(boxes_by_image),
+        boxes_by_image,
+        image_dir,
+        classes=load_classes(classes_path),
+        title_prefix="prediction/",
+        overlay_boxes_by_image=ground_truth_by_image,
+    )
+
+
 def draw_boxes(
     image_path: str | Path,
     boxes: list[dict[str, Any]],
