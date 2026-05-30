@@ -140,9 +140,8 @@ def train_one_epoch(
         progress.set_postfix(loss=f"{batch_logs['loss']:.4f}")
         if log_callback and (batch_index % log_interval == 0 or batch_index == len(loader)):
             log_callback(
-                f"Epoch {epoch:02d} train batch [{batch_index}/{len(loader)}] "
-                f"loss={batch_logs['loss']:.4f} "
-                f"avg_loss={totals['loss'] / batch_index:.4f}"
+                f"STAGE=train | EPOCH={epoch:02d} | BATCH={batch_index}/{len(loader)} | "
+                f"LOSS={batch_logs['loss']:.4f} | AVG_LOSS={totals['loss'] / batch_index:.4f}"
             )
 
     if dist.is_initialized():
@@ -271,34 +270,28 @@ def format_epoch_summary(
     elapsed_seconds: float,
 ) -> str:
     loss_keys = ["loss_classifier", "loss_box_reg", "loss_objectness", "loss_rpn_box_reg"]
-    lines = [
-        f"Epoch [{epoch:02d}/{total_epochs:02d}]",
-        f"├── Train Loss : {train_logs.get('loss', 0.0):.4f}",
+    fields = [
+        f"EPOCH={epoch:02d}/{total_epochs:02d}",
+        f"TRAIN_LOSS={train_logs.get('loss', 0.0):.4f}",
     ]
-    for index, key in enumerate(loss_keys):
-        branch = "└──" if index == len(loss_keys) - 1 else "├──"
-        lines.append(f"│   {branch} {key:<17}: {train_logs.get(key, 0.0):.4f}")
-
-    lines.extend(
+    fields.extend(f"{key.upper()}={train_logs.get(key, 0.0):.4f}" for key in loss_keys)
+    fields.extend(
         [
-            f"├── Val Loss   : {val_logs.get('loss', 0.0):.4f}",
-            f"├── mAP@0.5    : {val_metrics['mAP@0.5']:.4f}",
-            f"├── Precision  : {val_metrics['micro_precision']:.4f}",
-            f"├── Recall     : {val_metrics['micro_recall']:.4f}",
-            f"├── GT Boxes   : {val_metrics['num_ground_truth_boxes']}",
-            f"├── Predictions: {val_metrics['num_predictions']}",
-            "├── Per-class AP",
+            f"VAL_LOSS={val_logs.get('loss', 0.0):.4f}",
+            f"MAP@0.5={val_metrics['mAP@0.5']:.4f}",
+            f"PRECISION={val_metrics['micro_precision']:.4f}",
+            f"RECALL={val_metrics['micro_recall']:.4f}",
+            f"GT_BOXES={val_metrics['num_ground_truth_boxes']}",
+            f"PREDICTIONS={val_metrics['num_predictions']}",
         ]
     )
-    per_class = val_metrics["per_class"]
-    for index, (class_name, metrics) in enumerate(per_class.items()):
-        branch = "└──" if index == len(per_class) - 1 else "├──"
-        lines.append(
-            f"│   {branch} {class_name:<8}: AP={metrics['ap']:.4f}, "
-            f"P={metrics['precision']:.4f}, R={metrics['recall']:.4f}"
+    for class_name, metrics in val_metrics["per_class"].items():
+        fields.append(
+            f"{class_name.upper()}_AP={metrics['ap']:.4f},"
+            f"P={metrics['precision']:.4f},R={metrics['recall']:.4f}"
         )
-    lines.extend([f"├── LR         : {lr:.6f}", f"└── Time       : {elapsed_seconds:.1f}s"])
-    return "\n".join(lines)
+    fields.extend([f"LR={lr:.6f}", f"TIME={elapsed_seconds:.1f}s"])
+    return " | ".join(fields)
 
 
 def count_dataset_boxes(dataset: OdDataset) -> dict[str, Any]:
@@ -516,7 +509,7 @@ def main() -> None:
         epoch_started = time.perf_counter()
         current_lr = optimizer.param_groups[0]["lr"]
         if is_main_process:
-            append_session_log(text_log_path, f"Epoch [{epoch:02d}/{args.epochs:02d}] started.")
+            append_session_log(text_log_path, f"STAGE=epoch_start | EPOCH={epoch:02d}/{args.epochs:02d}")
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
         train_logs = train_one_epoch(
@@ -535,7 +528,7 @@ def main() -> None:
         )
 
         if is_main_process:
-            append_session_log(text_log_path, f"Epoch {epoch:02d} training completed. Computing validation loss.")
+            append_session_log(text_log_path, f"STAGE=val_loss | EPOCH={epoch:02d} | STATUS=started")
             val_logs = compute_validation_loss(
                 unwrap_model(model),
                 val_loader,
@@ -544,9 +537,10 @@ def main() -> None:
             )
             append_session_log(
                 text_log_path,
-                f"Epoch {epoch:02d} validation loss completed: {val_logs.get('loss', 0.0):.4f}. "
-                "Computing detection metrics.",
+                f"STAGE=val_loss | EPOCH={epoch:02d} | STATUS=completed | "
+                f"VAL_LOSS={val_logs.get('loss', 0.0):.4f}",
             )
+            append_session_log(text_log_path, f"STAGE=metrics | EPOCH={epoch:02d} | STATUS=started")
             val_predictions = predict_dataset(
                 unwrap_model(model),
                 val_dataset,
@@ -557,7 +551,7 @@ def main() -> None:
             )
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
             val_metrics = evaluate_map(val_gt, val_predictions, val_dataset.classes)
-            append_session_log(text_log_path, f"Epoch {epoch:02d} metrics computed. Saving artifacts.")
+            append_session_log(text_log_path, f"STAGE=save | EPOCH={epoch:02d} | STATUS=started")
             epoch_seconds = time.perf_counter() - epoch_started
 
             row = {
@@ -608,7 +602,7 @@ def main() -> None:
             )
             print(f"\n{epoch_summary}\n")
             append_session_log(text_log_path, epoch_summary, timestamp=False)
-            append_session_log(text_log_path, f"Epoch [{epoch:02d}/{args.epochs:02d}] completed.\n")
+            append_session_log(text_log_path, f"STAGE=epoch_end | EPOCH={epoch:02d}/{args.epochs:02d} | STATUS=completed")
         scheduler.step()
         if dist.is_initialized():
             dist.barrier()
