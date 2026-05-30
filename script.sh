@@ -36,6 +36,10 @@ GPU="${GPU:-}"
 GPUS="${GPUS:-}"
 USE_WANDB="${USE_WANDB:-0}"
 PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
+AUGMENTATION="${AUGMENTATION:-1}"
+HORIZONTAL_FLIP_PROBABILITY="${HORIZONTAL_FLIP_PROBABILITY:-0.5}"
+COLOR_JITTER_PROBABILITY="${COLOR_JITTER_PROBABILITY:-0.3}"
+GRAYSCALE_PROBABILITY="${GRAYSCALE_PROBABILITY:-0.05}"
 
 install() {
   python -m pip install --upgrade pip
@@ -70,6 +74,9 @@ train() {
     --lr_milestones "${LR_MILESTONES}"
     --lr_gamma "${LR_GAMMA}"
     --score_threshold "${SCORE_THRESHOLD}"
+    --horizontal_flip_probability "${HORIZONTAL_FLIP_PROBABILITY}"
+    --color_jitter_probability "${COLOR_JITTER_PROBABILITY}"
+    --grayscale_probability "${GRAYSCALE_PROBABILITY}"
   )
 
   if [[ -n "${GPUS}" ]]; then
@@ -86,6 +93,12 @@ train() {
     train_args+=(--pretrained_backbone)
   else
     train_args+=(--no-pretrained_backbone)
+  fi
+
+  if [[ "${AUGMENTATION}" == "1" ]]; then
+    train_args+=(--augmentation)
+  else
+    train_args+=(--no-augmentation)
   fi
 
   python train.py "${train_args[@]}"

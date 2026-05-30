@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -14,9 +15,93 @@ if str(ROOT) not in sys.path:
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision.transforms import ColorJitter
 from torchvision.transforms import functional as F
 
 from utils.helper import build_class_maps, resolve_image_path
+
+
+class DetectionCompose:
+    def __init__(self, transforms: list[Callable]) -> None:
+        self.transforms = transforms
+
+    def __call__(
+        self, image: torch.Tensor, target: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        for transform in self.transforms:
+            image, target = transform(image, target)
+        return image, target
+
+
+class RandomHorizontalFlip:
+    def __init__(self, probability: float = 0.5) -> None:
+        self.probability = probability
+
+    def __call__(
+        self, image: torch.Tensor, target: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if random.random() >= self.probability:
+            return image, target
+
+        image = F.hflip(image)
+        width = image.shape[-1]
+        boxes = target["boxes"].clone()
+        if boxes.numel():
+            boxes[:, [0, 2]] = width - boxes[:, [2, 0]]
+        target["boxes"] = boxes
+        return image, target
+
+
+class RandomColorJitter:
+    def __init__(
+        self,
+        probability: float = 0.3,
+        brightness: float = 0.15,
+        contrast: float = 0.15,
+        saturation: float = 0.15,
+        hue: float = 0.03,
+    ) -> None:
+        self.probability = probability
+        self.transform = ColorJitter(
+            brightness=brightness,
+            contrast=contrast,
+            saturation=saturation,
+            hue=hue,
+        )
+
+    def __call__(
+        self, image: torch.Tensor, target: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if random.random() < self.probability:
+            image = self.transform(image)
+        return image, target
+
+
+class RandomGrayscale:
+    def __init__(self, probability: float = 0.05) -> None:
+        self.probability = probability
+
+    def __call__(
+        self, image: torch.Tensor, target: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if random.random() < self.probability:
+            image = F.rgb_to_grayscale(image, num_output_channels=3)
+        return image, target
+
+
+def build_train_transforms(
+    horizontal_flip_probability: float = 0.5,
+    color_jitter_probability: float = 0.3,
+    grayscale_probability: float = 0.05,
+) -> DetectionCompose:
+    """Build conservative augmentations that preserve detection boxes."""
+    return DetectionCompose(
+        [
+            RandomHorizontalFlip(horizontal_flip_probability),
+            RandomColorJitter(color_jitter_probability),
+            RandomGrayscale(grayscale_probability),
+        ]
+    )
 
 
 class OdDataset(Dataset):
@@ -92,7 +177,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    dataset = OdDataset(args.annotation, args.image_dir)
+    dataset = OdDataset(args.annotation, args.image_dir, transforms=build_train_transforms())
     image, target = dataset[0]
     print(f"Dataset size: {len(dataset)}")
     print(f"Image tensor: {tuple(image.shape)} {image.dtype}")

@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
 
 from models.faster_rcnn import create_faster_rcnn_resnet50
 from models.modules import get_device, move_targets_to_device, save_checkpoint
-from utils.dataset import OdDataset, collate_fn
+from utils.dataset import OdDataset, build_train_transforms, collate_fn
 from utils.helper import save_json
 from utils.metric import evaluate_map
 
@@ -68,6 +68,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--eval_max_images", type=int, default=0)
     parser.add_argument("--log_interval", type=int, default=20, help="Append progress to session log every N batches.")
+    parser.add_argument(
+        "--augmentation",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Apply conservative detection augmentations to the training dataset.",
+    )
+    parser.add_argument("--horizontal_flip_probability", type=float, default=0.5)
+    parser.add_argument("--color_jitter_probability", type=float, default=0.3)
+    parser.add_argument("--grayscale_probability", type=float, default=0.05)
     return parser.parse_args()
 
 
@@ -410,6 +419,7 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"lr_milestones={info['hyperparameters']['lr_milestones']}, "
         f"lr_gamma={info['hyperparameters']['lr_gamma']}, "
         f"score_threshold={info['hyperparameters']['score_threshold']}, "
+        f"augmentation={info['hyperparameters']['augmentation']}, "
         f"num_workers={info['hyperparameters']['num_workers']}, "
         f"log_interval={info['hyperparameters']['log_interval']}"
     )
@@ -425,6 +435,13 @@ def main() -> None:
     if args.log_interval <= 0:
         raise ValueError("--log_interval must be greater than 0.")
     lr_milestones = parse_lr_milestones(args.lr_milestones)
+    probabilities = [
+        args.horizontal_flip_probability,
+        args.color_jitter_probability,
+        args.grayscale_probability,
+    ]
+    if any(value < 0 or value > 1 for value in probabilities):
+        raise ValueError("Augmentation probabilities must be between 0 and 1.")
     maybe_launch_distributed(args)
     device, rank, world_size = setup_device(args)
     is_main_process = rank == 0
@@ -437,7 +454,16 @@ def main() -> None:
     metrics_dir = saved_results_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
-    train_dataset = OdDataset(args.train_data, args.image_dir)
+    train_transforms = (
+        build_train_transforms(
+            horizontal_flip_probability=args.horizontal_flip_probability,
+            color_jitter_probability=args.color_jitter_probability,
+            grayscale_probability=args.grayscale_probability,
+        )
+        if args.augmentation
+        else None
+    )
+    train_dataset = OdDataset(args.train_data, args.image_dir, transforms=train_transforms)
     val_dataset = OdDataset(args.val_data, args.val_image_dir, classes=train_dataset.classes)
     train_sampler = DistributedSampler(train_dataset, shuffle=True) if world_size > 1 else None
     train_loader = DataLoader(
@@ -501,6 +527,10 @@ def main() -> None:
             "eval_max_images": args.eval_max_images,
             "log_interval": args.log_interval,
             "pretrained_backbone": args.pretrained_backbone,
+            "augmentation": args.augmentation,
+            "horizontal_flip_probability": args.horizontal_flip_probability,
+            "color_jitter_probability": args.color_jitter_probability,
+            "grayscale_probability": args.grayscale_probability,
         },
         "paths": {
             "train_data": str(Path(args.train_data)),
