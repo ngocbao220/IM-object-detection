@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover
     wandb = None
 
 from models.faster_rcnn import create_faster_rcnn_resnet50
-from models.modules import get_device, move_targets_to_device, save_checkpoint
+from models.modules import get_device, move_targets_to_device, save_checkpoint_with_alias
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
 from utils.helper import save_json
 from utils.metric import evaluate_map
@@ -436,6 +436,8 @@ def format_session_info(info: dict[str, Any]) -> str:
     )
     lines.append(f"Saved results dir: {info['paths']['saved_results_dir']}")
     lines.append(f"Checkpoint dir: {info['paths']['checkpoint_dir']}")
+    lines.append(f"Best checkpoint: {info['paths']['best_checkpoint']}")
+    lines.append(f"Last checkpoint: {info['paths']['last_checkpoint']}")
     lines.append(f"Log dir: {info['paths']['log_dir']}")
     lines.append("=====================================")
     return "\n".join(lines)
@@ -559,6 +561,8 @@ def main() -> None:
             "checkpoint_dir": str(checkpoint_dir),
             "log_dir": str(log_dir),
             "metrics_dir": str(metrics_dir),
+            "last_checkpoint": str(checkpoint_dir / f"last_model-{started}.pth"),
+            "best_checkpoint": str(checkpoint_dir / f"best_model-{started}.pth"),
         },
     }
     session_info_path = log_dir / f"session-{started}.json"
@@ -585,6 +589,10 @@ def main() -> None:
     epochs_without_improvement = 0
     jsonl_path = log_dir / f"train-{started}.jsonl"
     csv_path = log_dir / f"train-{started}.csv"
+    last_checkpoint_path = checkpoint_dir / f"last_model-{started}.pth"
+    best_checkpoint_path = checkpoint_dir / f"best_model-{started}.pth"
+    last_checkpoint_alias = checkpoint_dir / "last_model.pth"
+    best_checkpoint_alias = checkpoint_dir / "best_model.pth"
 
     for epoch in range(1, args.epochs + 1):
         should_stop = False
@@ -653,8 +661,9 @@ def main() -> None:
 
             epoch_metrics = {"epoch": epoch, "train": train_logs, "val": val_logs, **val_metrics}
             save_json(epoch_metrics, metrics_dir / f"epoch_{epoch:03d}.json")
-            save_checkpoint(
-                checkpoint_dir / "last_model.pth",
+            save_checkpoint_with_alias(
+                last_checkpoint_path,
+                last_checkpoint_alias,
                 unwrap_model(model),
                 optimizer,
                 epoch,
@@ -665,8 +674,9 @@ def main() -> None:
             if current_map > best_map + args.early_stopping_min_delta:
                 best_map = val_metrics["mAP@0.5"]
                 epochs_without_improvement = 0
-                save_checkpoint(
-                    checkpoint_dir / "best_model.pth",
+                save_checkpoint_with_alias(
+                    best_checkpoint_path,
+                    best_checkpoint_alias,
                     unwrap_model(model),
                     optimizer,
                     epoch,
@@ -675,7 +685,8 @@ def main() -> None:
                 )
                 append_session_log(
                     text_log_path,
-                    f"Epoch {epoch:02d} improved mAP@0.5 to {best_map:.4f}. Saved best checkpoint.",
+                    f"Epoch {epoch:02d} improved mAP@0.5 to {best_map:.4f}. "
+                    f"Saved best checkpoint: {best_checkpoint_path.name}.",
                 )
             else:
                 epochs_without_improvement += 1

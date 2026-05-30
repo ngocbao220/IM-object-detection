@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,22 @@ def save_checkpoint(
         },
         output,
     )
+
+
+def save_checkpoint_with_alias(
+    path: str | Path,
+    alias_path: str | Path,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer | None,
+    epoch: int,
+    classes: list[str],
+    metrics: dict[str, Any] | None = None,
+) -> None:
+    """Save a timestamped checkpoint and refresh a stable latest alias."""
+    save_checkpoint(path, model, optimizer, epoch, classes, metrics)
+    alias = Path(alias_path)
+    alias.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, alias)
 
 
 def load_checkpoint(

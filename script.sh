@@ -37,6 +37,7 @@ PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 GPU="${GPU:-}"
 GPUS="${GPUS:-}"
 USE_WANDB="${USE_WANDB:-0}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-}"
 PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
 AUGMENTATION="${AUGMENTATION:-1}"
 HORIZONTAL_FLIP_PROBABILITY="${HORIZONTAL_FLIP_PROBABILITY:-0.5}"
@@ -96,6 +97,9 @@ train() {
 
   if [[ "${USE_WANDB}" == "1" ]]; then
     train_args+=(--use_wandb)
+    if [[ -n "${WANDB_RUN_NAME}" ]]; then
+      train_args+=(--wandb_run_name "${WANDB_RUN_NAME}")
+    fi
   fi
 
   if [[ "${PRETRAINED_BACKBONE}" == "1" ]]; then
@@ -154,6 +158,7 @@ run_augmentation_experiment() {
   COLOR_JITTER_PROBABILITY="${jitter_probability}" \
   GRAYSCALE_PROBABILITY="${grayscale_probability}" \
   EARLY_STOPPING=0 \
+  WANDB_RUN_NAME="${experiment_name}" \
   train
 }
 
