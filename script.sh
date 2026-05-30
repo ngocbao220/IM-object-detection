@@ -40,6 +40,9 @@ AUGMENTATION="${AUGMENTATION:-1}"
 HORIZONTAL_FLIP_PROBABILITY="${HORIZONTAL_FLIP_PROBABILITY:-0.5}"
 COLOR_JITTER_PROBABILITY="${COLOR_JITTER_PROBABILITY:-0.3}"
 GRAYSCALE_PROBABILITY="${GRAYSCALE_PROBABILITY:-0.05}"
+EARLY_STOPPING="${EARLY_STOPPING:-1}"
+EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-7}"
+EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-0.001}"
 
 install() {
   python -m pip install --upgrade pip
@@ -77,6 +80,8 @@ train() {
     --horizontal_flip_probability "${HORIZONTAL_FLIP_PROBABILITY}"
     --color_jitter_probability "${COLOR_JITTER_PROBABILITY}"
     --grayscale_probability "${GRAYSCALE_PROBABILITY}"
+    --early_stopping_patience "${EARLY_STOPPING_PATIENCE}"
+    --early_stopping_min_delta "${EARLY_STOPPING_MIN_DELTA}"
   )
 
   if [[ -n "${GPUS}" ]]; then
@@ -99,6 +104,12 @@ train() {
     train_args+=(--augmentation)
   else
     train_args+=(--no-augmentation)
+  fi
+
+  if [[ "${EARLY_STOPPING}" == "1" ]]; then
+    train_args+=(--early_stopping)
+  else
+    train_args+=(--no-early_stopping)
   fi
 
   python train.py "${train_args[@]}"

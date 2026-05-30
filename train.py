@@ -77,6 +77,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizontal_flip_probability", type=float, default=0.5)
     parser.add_argument("--color_jitter_probability", type=float, default=0.3)
     parser.add_argument("--grayscale_probability", type=float, default=0.05)
+    parser.add_argument(
+        "--early_stopping",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Stop training when validation mAP@0.5 does not improve enough.",
+    )
+    parser.add_argument("--early_stopping_patience", type=int, default=7)
+    parser.add_argument("--early_stopping_min_delta", type=float, default=0.001)
     return parser.parse_args()
 
 
@@ -420,6 +428,9 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"lr_gamma={info['hyperparameters']['lr_gamma']}, "
         f"score_threshold={info['hyperparameters']['score_threshold']}, "
         f"augmentation={info['hyperparameters']['augmentation']}, "
+        f"early_stopping={info['hyperparameters']['early_stopping']}, "
+        f"early_stopping_patience={info['hyperparameters']['early_stopping_patience']}, "
+        f"early_stopping_min_delta={info['hyperparameters']['early_stopping_min_delta']}, "
         f"num_workers={info['hyperparameters']['num_workers']}, "
         f"log_interval={info['hyperparameters']['log_interval']}"
     )
@@ -434,6 +445,10 @@ def main() -> None:
     args = parse_args()
     if args.log_interval <= 0:
         raise ValueError("--log_interval must be greater than 0.")
+    if args.early_stopping_patience <= 0:
+        raise ValueError("--early_stopping_patience must be greater than 0.")
+    if args.early_stopping_min_delta < 0:
+        raise ValueError("--early_stopping_min_delta must be greater than or equal to 0.")
     lr_milestones = parse_lr_milestones(args.lr_milestones)
     probabilities = [
         args.horizontal_flip_probability,
@@ -531,6 +546,9 @@ def main() -> None:
             "horizontal_flip_probability": args.horizontal_flip_probability,
             "color_jitter_probability": args.color_jitter_probability,
             "grayscale_probability": args.grayscale_probability,
+            "early_stopping": args.early_stopping,
+            "early_stopping_patience": args.early_stopping_patience,
+            "early_stopping_min_delta": args.early_stopping_min_delta,
         },
         "paths": {
             "train_data": str(Path(args.train_data)),
@@ -564,10 +582,12 @@ def main() -> None:
             )
 
     best_map = -1.0
+    epochs_without_improvement = 0
     jsonl_path = log_dir / f"train-{started}.jsonl"
     csv_path = log_dir / f"train-{started}.csv"
 
     for epoch in range(1, args.epochs + 1):
+        should_stop = False
         epoch_started = time.perf_counter()
         current_lr = optimizer.param_groups[0]["lr"]
         if is_main_process:
@@ -641,8 +661,10 @@ def main() -> None:
                 train_dataset.classes,
                 epoch_metrics,
             )
-            if val_metrics["mAP@0.5"] > best_map:
+            current_map = val_metrics["mAP@0.5"]
+            if current_map > best_map + args.early_stopping_min_delta:
                 best_map = val_metrics["mAP@0.5"]
+                epochs_without_improvement = 0
                 save_checkpoint(
                     checkpoint_dir / "best_model.pth",
                     unwrap_model(model),
@@ -650,6 +672,18 @@ def main() -> None:
                     epoch,
                     train_dataset.classes,
                     epoch_metrics,
+                )
+                append_session_log(
+                    text_log_path,
+                    f"Epoch {epoch:02d} improved mAP@0.5 to {best_map:.4f}. Saved best checkpoint.",
+                )
+            else:
+                epochs_without_improvement += 1
+                append_session_log(
+                    text_log_path,
+                    f"Epoch {epoch:02d} did not improve mAP@0.5 enough. "
+                    f"Early stopping counter: {epochs_without_improvement}/"
+                    f"{args.early_stopping_patience}.",
                 )
 
             epoch_summary = format_epoch_summary(
@@ -664,9 +698,24 @@ def main() -> None:
             print(f"\n{epoch_summary}\n")
             append_session_log(text_log_path, epoch_summary, timestamp=False)
             append_session_log(text_log_path, f"Epoch [{epoch:02d}/{args.epochs:02d}] completed.\n")
+            should_stop = (
+                args.early_stopping
+                and epochs_without_improvement >= args.early_stopping_patience
+            )
+            if should_stop:
+                append_session_log(
+                    text_log_path,
+                    f"Early stopping triggered at epoch {epoch:02d}. "
+                    f"Best mAP@0.5={best_map:.4f}.",
+                )
         scheduler.step()
         if dist.is_initialized():
+            stop_tensor = torch.tensor([int(should_stop)], device=device)
+            dist.broadcast(stop_tensor, src=0)
             dist.barrier()
+            should_stop = bool(stop_tensor.item())
+        if should_stop:
+            break
 
     if run is not None:
         run.finish()
