@@ -46,8 +46,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight_decay", type=float, default=0.0005)
     parser.add_argument("--score_threshold", type=float, default=0.05)
     parser.add_argument("--device", default=None)
-    parser.add_argument("--gpu", type=int, default=None, help="Use one CUDA GPU, e.g. --gpu 0.")
-    parser.add_argument("--gpus", default=None, help="Use multiple CUDA GPUs with DDP, e.g. --gpus 0,1.")
+    gpu_group = parser.add_mutually_exclusive_group()
+    gpu_group.add_argument("--gpu", type=int, default=None, help="Use one CUDA GPU, e.g. --gpu 0.")
+    gpu_group.add_argument("--gpus", default=None, help="Use multiple CUDA GPUs with DDP, e.g. --gpus 0,1.")
     parser.add_argument("--distributed", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--pretrained_backbone", action="store_true")
     parser.add_argument("--pretrained_coco", action="store_true")
@@ -65,19 +66,6 @@ def maybe_launch_distributed(args: argparse.Namespace) -> None:
     if len(gpu_ids) < 2:
         raise ValueError("--gpus requires at least two GPU ids, e.g. --gpus 0,1.")
 
-    child_args = []
-    skip_next = False
-    for value in sys.argv[1:]:
-        if skip_next:
-            skip_next = False
-            continue
-        if value == "--gpus":
-            skip_next = True
-            continue
-        if value.startswith("--gpus="):
-            continue
-        child_args.append(value)
-
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = ",".join(gpu_ids)
     command = [
@@ -88,7 +76,7 @@ def maybe_launch_distributed(args: argparse.Namespace) -> None:
         "--nproc_per_node",
         str(len(gpu_ids)),
         str(Path(__file__).resolve()),
-        *child_args,
+        *sys.argv[1:],
         "--distributed",
     ]
     print(f"Launching DDP training on GPUs: {', '.join(gpu_ids)}")
