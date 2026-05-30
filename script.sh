@@ -7,6 +7,8 @@ set -euo pipefail
 #   bash script.sh train
 #   bash script.sh predict
 #   bash script.sh evaluate
+#   bash script.sh augment-ablation
+#   bash script.sh augment-summary
 #   bash script.sh all
 
 KAGGLE_DATASET_SLUG="${KAGGLE_DATASET_SLUG:-ngocbaotrinhtuan/object-detection/final_public.zip}"
@@ -43,6 +45,8 @@ GRAYSCALE_PROBABILITY="${GRAYSCALE_PROBABILITY:-0.05}"
 EARLY_STOPPING="${EARLY_STOPPING:-1}"
 EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-7}"
 EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-0.001}"
+ABLATION_RESULTS_DIR="${ABLATION_RESULTS_DIR:-./saved_results/augmentation_ablation}"
+ABLATION_EPOCHS="${ABLATION_EPOCHS:-30}"
 
 install() {
   python -m pip install --upgrade pip
@@ -130,6 +134,43 @@ evaluate() {
     --output "${EVAL_OUTPUT}"
 }
 
+run_augmentation_experiment() {
+  experiment_name="$1"
+  augmentation="$2"
+  flip_probability="$3"
+  jitter_probability="$4"
+  grayscale_probability="$5"
+
+  echo "============================================================"
+  echo "Running augmentation experiment: ${experiment_name}"
+  echo "augmentation=${augmentation} flip=${flip_probability} jitter=${jitter_probability} grayscale=${grayscale_probability}"
+  echo "results=${ABLATION_RESULTS_DIR}/${experiment_name}"
+  echo "============================================================"
+
+  SAVED_RESULTS_DIR="${ABLATION_RESULTS_DIR}/${experiment_name}" \
+  EPOCHS="${ABLATION_EPOCHS}" \
+  AUGMENTATION="${augmentation}" \
+  HORIZONTAL_FLIP_PROBABILITY="${flip_probability}" \
+  COLOR_JITTER_PROBABILITY="${jitter_probability}" \
+  GRAYSCALE_PROBABILITY="${grayscale_probability}" \
+  EARLY_STOPPING=0 \
+  train
+}
+
+augment_ablation() {
+  run_augmentation_experiment "00_no_augmentation" 0 0.0 0.0 0.0
+  run_augmentation_experiment "01_horizontal_flip" 1 0.5 0.0 0.0
+  run_augmentation_experiment "02_color_jitter" 1 0.0 0.3 0.0
+  run_augmentation_experiment "03_grayscale" 1 0.0 0.0 0.05
+  run_augmentation_experiment "04_all_augmentations" 1 0.5 0.3 0.05
+  summarize_augmentation_ablation
+}
+
+summarize_augmentation_ablation() {
+  python utils/summarize_augmentation_ablation.py \
+    --results_dir "${ABLATION_RESULTS_DIR}"
+}
+
 self_test() {
   python utils/metric.py
   python utils/dataset.py \
@@ -153,6 +194,12 @@ case "${1:-help}" in
     ;;
   evaluate)
     evaluate
+    ;;
+  augment-ablation)
+    augment_ablation
+    ;;
+  augment-summary)
+    summarize_augmentation_ablation
     ;;
   test)
     self_test
