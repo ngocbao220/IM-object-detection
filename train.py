@@ -10,7 +10,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 import torch.distributed as dist
@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb_run_name", default=None)
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--eval_max_images", type=int, default=0)
+    parser.add_argument("--log_interval", type=int, default=20, help="Append progress to session log every N batches.")
     return parser.parse_args()
 
 
@@ -114,12 +115,14 @@ def train_one_epoch(
     device: torch.device,
     epoch: int,
     is_main_process: bool = True,
+    log_interval: int = 20,
+    log_callback: Callable[[str], None] | None = None,
 ) -> dict[str, float]:
     model.train()
     totals: dict[str, float] = {}
     progress = tqdm(loader, desc=f"train epoch {epoch}", leave=False, disable=not is_main_process)
 
-    for images, targets in progress:
+    for batch_index, (images, targets) in enumerate(progress, start=1):
         images = [image.to(device) for image in images]
         targets = move_targets_to_device(list(targets), device)
 
@@ -135,6 +138,12 @@ def train_one_epoch(
         for key, value in batch_logs.items():
             totals[key] = totals.get(key, 0.0) + value
         progress.set_postfix(loss=f"{batch_logs['loss']:.4f}")
+        if log_callback and (batch_index % log_interval == 0 or batch_index == len(loader)):
+            log_callback(
+                f"Epoch {epoch:02d} train batch [{batch_index}/{len(loader)}] "
+                f"loss={batch_logs['loss']:.4f} "
+                f"avg_loss={totals['loss'] / batch_index:.4f}"
+            )
 
     if dist.is_initialized():
         keys = sorted(totals)
@@ -242,6 +251,16 @@ def append_csv(path: Path, row: dict[str, Any]) -> None:
         writer.writerow(row)
 
 
+def append_session_log(path: Path, message: str, timestamp: bool = True) -> None:
+    """Append and flush immediately so a running cloud job is observable."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prefix = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] " if timestamp else ""
+    with path.open("a", encoding="utf-8") as f:
+        f.write(prefix + message.rstrip() + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
 def format_epoch_summary(
     epoch: int,
     total_epochs: int,
@@ -328,57 +347,63 @@ def count_parameters(model: torch.nn.Module) -> dict[str, int]:
     return {"total_parameters": total, "trainable_parameters": trainable}
 
 
-def print_session_info(info: dict[str, Any]) -> None:
-    print("\n========== Training Session ==========")
-    print(f"Started: {info['started_at']}")
-    print(f"Device: {info['device']['selected_device']}")
+def format_session_info(info: dict[str, Any]) -> str:
+    lines = [
+        "========== Training Session ==========",
+        f"Started: {info['started_at']}",
+        f"Device: {info['device']['selected_device']}",
+    ]
     if info["distributed"]["world_size"] > 1:
-        print(
+        lines.append(
             f"Distributed: DDP with {info['distributed']['world_size']} processes "
             f"on GPUs {info['distributed']['gpus']}"
         )
     if "cuda_device_name" in info["device"]:
-        print(
+        lines.append(
             "CUDA: "
             f"{info['device']['cuda_device_name']} "
             f"({info['device']['cuda_total_memory_gb']} GB)"
         )
-    print(f"Torch: {info['device']['torch_version']}")
-    print(f"Classes: {', '.join(info['classes'])}")
-    print(
+    lines.append(f"Torch: {info['device']['torch_version']}")
+    lines.append(f"Classes: {', '.join(info['classes'])}")
+    lines.append(
         "Train dataset: "
         f"{info['dataset']['train']['num_images']} images, "
         f"{info['dataset']['train']['num_boxes']} boxes, "
         f"{info['dataset']['train']['images_without_boxes']} empty images"
     )
-    print(
+    lines.append(
         "Val dataset: "
         f"{info['dataset']['val']['num_images']} images, "
         f"{info['dataset']['val']['num_boxes']} boxes, "
         f"{info['dataset']['val']['images_without_boxes']} empty images"
     )
-    print(f"Train class counts: {info['dataset']['train']['class_counts']}")
-    print(f"Val class counts: {info['dataset']['val']['class_counts']}")
-    print(
+    lines.append(f"Train class counts: {info['dataset']['train']['class_counts']}")
+    lines.append(f"Val class counts: {info['dataset']['val']['class_counts']}")
+    lines.append(
         "Model: Faster R-CNN ResNet-50 FPN "
         f"({info['model']['trainable_parameters']:,}/"
         f"{info['model']['total_parameters']:,} trainable/total params)"
     )
-    print(
+    lines.append(
         "Hyperparams: "
         f"epochs={info['hyperparameters']['epochs']}, "
         f"batch_size={info['hyperparameters']['batch_size']}, "
         f"lr={info['hyperparameters']['lr']}, "
-        f"num_workers={info['hyperparameters']['num_workers']}"
+        f"num_workers={info['hyperparameters']['num_workers']}, "
+        f"log_interval={info['hyperparameters']['log_interval']}"
     )
-    print(f"Saved results dir: {info['paths']['saved_results_dir']}")
-    print(f"Checkpoint dir: {info['paths']['checkpoint_dir']}")
-    print(f"Log dir: {info['paths']['log_dir']}")
-    print("=====================================\n")
+    lines.append(f"Saved results dir: {info['paths']['saved_results_dir']}")
+    lines.append(f"Checkpoint dir: {info['paths']['checkpoint_dir']}")
+    lines.append(f"Log dir: {info['paths']['log_dir']}")
+    lines.append("=====================================")
+    return "\n".join(lines)
 
 
 def main() -> None:
     args = parse_args()
+    if args.log_interval <= 0:
+        raise ValueError("--log_interval must be greater than 0.")
     maybe_launch_distributed(args)
     device, rank, world_size = setup_device(args)
     is_main_process = rank == 0
@@ -448,6 +473,7 @@ def main() -> None:
             "weight_decay": args.weight_decay,
             "score_threshold": args.score_threshold,
             "eval_max_images": args.eval_max_images,
+            "log_interval": args.log_interval,
             "pretrained_backbone": args.pretrained_backbone,
             "pretrained_coco": args.pretrained_coco,
         },
@@ -463,9 +489,13 @@ def main() -> None:
         },
     }
     session_info_path = log_dir / f"session-{started}.json"
+    text_log_path = log_dir / f"session-{started}.log"
     if is_main_process:
         save_json(session_info, session_info_path)
-        print_session_info(session_info)
+        session_header = format_session_info(session_info)
+        print(f"\n{session_header}\n")
+        append_session_log(text_log_path, session_header, timestamp=False)
+        append_session_log(text_log_path, "Training session initialized.")
 
     run = None
     if args.use_wandb and is_main_process:
@@ -481,21 +511,41 @@ def main() -> None:
     best_map = -1.0
     jsonl_path = log_dir / f"train-{started}.jsonl"
     csv_path = log_dir / f"train-{started}.csv"
-    text_log_path = log_dir / f"train-{started}.log"
 
     for epoch in range(1, args.epochs + 1):
         epoch_started = time.perf_counter()
         current_lr = optimizer.param_groups[0]["lr"]
+        if is_main_process:
+            append_session_log(text_log_path, f"Epoch [{epoch:02d}/{args.epochs:02d}] started.")
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
-        train_logs = train_one_epoch(model, train_loader, optimizer, device, epoch, is_main_process)
+        train_logs = train_one_epoch(
+            model,
+            train_loader,
+            optimizer,
+            device,
+            epoch,
+            is_main_process,
+            log_interval=args.log_interval,
+            log_callback=(
+                lambda message: append_session_log(text_log_path, message)
+                if is_main_process
+                else None
+            ),
+        )
 
         if is_main_process:
+            append_session_log(text_log_path, f"Epoch {epoch:02d} training completed. Computing validation loss.")
             val_logs = compute_validation_loss(
                 unwrap_model(model),
                 val_loader,
                 device,
                 max_images=args.eval_max_images,
+            )
+            append_session_log(
+                text_log_path,
+                f"Epoch {epoch:02d} validation loss completed: {val_logs.get('loss', 0.0):.4f}. "
+                "Computing detection metrics.",
             )
             val_predictions = predict_dataset(
                 unwrap_model(model),
@@ -507,6 +557,7 @@ def main() -> None:
             )
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
             val_metrics = evaluate_map(val_gt, val_predictions, val_dataset.classes)
+            append_session_log(text_log_path, f"Epoch {epoch:02d} metrics computed. Saving artifacts.")
             epoch_seconds = time.perf_counter() - epoch_started
 
             row = {
@@ -556,14 +607,16 @@ def main() -> None:
                 epoch_seconds,
             )
             print(f"\n{epoch_summary}\n")
-            with text_log_path.open("a", encoding="utf-8") as f:
-                f.write(epoch_summary + "\n\n")
+            append_session_log(text_log_path, epoch_summary, timestamp=False)
+            append_session_log(text_log_path, f"Epoch [{epoch:02d}/{args.epochs:02d}] completed.\n")
         scheduler.step()
         if dist.is_initialized():
             dist.barrier()
 
     if run is not None:
         run.finish()
+    if is_main_process:
+        append_session_log(text_log_path, "Training session completed.")
     if dist.is_initialized():
         dist.destroy_process_group()
 

@@ -26,6 +26,7 @@ EVAL_OUTPUT="${EVAL_OUTPUT:-${SAVED_RESULTS_DIR}/evaluation.json}"
 EPOCHS="${EPOCHS:-100}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
+LOG_INTERVAL="${LOG_INTERVAL:-20}"
 LR="${LR:-0.005}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
@@ -61,6 +62,7 @@ train() {
     --epochs "${EPOCHS}"
     --batch_size "${BATCH_SIZE}"
     --num_workers "${NUM_WORKERS}"
+    --log_interval "${LOG_INTERVAL}"
     --lr "${LR}"
   )
 
