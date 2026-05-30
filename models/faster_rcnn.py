@@ -4,30 +4,26 @@ import argparse
 
 import torch
 from torchvision.models import ResNet50_Weights
-from torchvision.models.detection import FasterRCNN_ResNet50_FPN_Weights
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, fasterrcnn_resnet50_fpn
 
 
 def create_faster_rcnn_resnet50(
     num_classes: int,
     pretrained_backbone: bool = False,
-    pretrained_coco: bool = False,
     trainable_backbone_layers: int = 3,
     min_size: int = 512,
     max_size: int = 768,
     box_score_thresh: float = 0.05,
 ) -> torch.nn.Module:
-    """Create Faster R-CNN with ResNet-50 FPN backbone.
+    """Create Faster R-CNN with an optional ImageNet-pretrained ResNet-50 backbone.
 
-    num_classes includes the background class at index 0.
+    Detection components are initialized from scratch. num_classes includes the
+    background class at index 0.
     """
-    weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT if pretrained_coco else None
-    weights_backbone = ResNet50_Weights.DEFAULT if pretrained_backbone and not pretrained_coco else None
-    effective_trainable_layers = (
-        trainable_backbone_layers if weights is not None or weights_backbone is not None else None
-    )
+    weights_backbone = ResNet50_Weights.DEFAULT if pretrained_backbone else None
+    effective_trainable_layers = trainable_backbone_layers if weights_backbone is not None else None
     model = fasterrcnn_resnet50_fpn(
-        weights=weights,
+        weights=None,
         weights_backbone=weights_backbone,
         trainable_backbone_layers=effective_trainable_layers,
         min_size=min_size,

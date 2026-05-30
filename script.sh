@@ -23,16 +23,19 @@ PREDICT_IMAGE_DIR="${PREDICT_IMAGE_DIR:-./public/val/images}"
 PREDICTIONS_OUTPUT="${PREDICTIONS_OUTPUT:-${SAVED_RESULTS_DIR}/predictions.json}"
 EVAL_OUTPUT="${EVAL_OUTPUT:-${SAVED_RESULTS_DIR}/evaluation.json}"
 
-EPOCHS="${EPOCHS:-100}"
-BATCH_SIZE="${BATCH_SIZE:-64}"
+EPOCHS="${EPOCHS:-30}"
+BATCH_SIZE="${BATCH_SIZE:-2}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
 LOG_INTERVAL="${LOG_INTERVAL:-20}"
 LR="${LR:-0.005}"
+LR_MILESTONES="${LR_MILESTONES:-15,25}"
+LR_GAMMA="${LR_GAMMA:-0.1}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 GPU="${GPU:-}"
 GPUS="${GPUS:-}"
 USE_WANDB="${USE_WANDB:-0}"
+PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
 
 install() {
   python -m pip install --upgrade pip
@@ -64,6 +67,9 @@ train() {
     --num_workers "${NUM_WORKERS}"
     --log_interval "${LOG_INTERVAL}"
     --lr "${LR}"
+    --lr_milestones "${LR_MILESTONES}"
+    --lr_gamma "${LR_GAMMA}"
+    --score_threshold "${SCORE_THRESHOLD}"
   )
 
   if [[ -n "${GPUS}" ]]; then
@@ -74,6 +80,12 @@ train() {
 
   if [[ "${USE_WANDB}" == "1" ]]; then
     train_args+=(--use_wandb)
+  fi
+
+  if [[ "${PRETRAINED_BACKBONE}" == "1" ]]; then
+    train_args+=(--pretrained_backbone)
+  else
+    train_args+=(--no-pretrained_backbone)
   fi
 
   python train.py "${train_args[@]}"

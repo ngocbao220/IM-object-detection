@@ -45,14 +45,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=0.0005)
-    parser.add_argument("--score_threshold", type=float, default=0.05)
+    parser.add_argument("--score_threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--lr_milestones",
+        default="15,25",
+        help="Comma-separated epochs at which LR is multiplied by --lr_gamma.",
+    )
+    parser.add_argument("--lr_gamma", type=float, default=0.1)
     parser.add_argument("--device", default=None)
     gpu_group = parser.add_mutually_exclusive_group()
     gpu_group.add_argument("--gpu", type=int, default=None, help="Use one CUDA GPU, e.g. --gpu 0.")
     gpu_group.add_argument("--gpus", default=None, help="Use multiple CUDA GPUs with DDP, e.g. --gpus 0,1.")
     parser.add_argument("--distributed", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--pretrained_backbone", action="store_true")
-    parser.add_argument("--pretrained_coco", action="store_true")
+    parser.add_argument(
+        "--pretrained_backbone",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use ResNet-50 ImageNet weights. Faster R-CNN detection heads remain randomly initialized.",
+    )
     parser.add_argument("--wandb_project", default="object-detection-final")
     parser.add_argument("--wandb_run_name", default=None)
     parser.add_argument("--use_wandb", action="store_true")
@@ -84,6 +94,13 @@ def maybe_launch_distributed(args: argparse.Namespace) -> None:
     print(f"Launching DDP training on GPUs: {', '.join(gpu_ids)}")
     subprocess.run(command, env=env, check=True)
     raise SystemExit(0)
+
+
+def parse_lr_milestones(value: str) -> list[int]:
+    milestones = [int(item.strip()) for item in value.split(",") if item.strip()]
+    if any(epoch <= 0 for epoch in milestones):
+        raise ValueError("--lr_milestones must contain positive epoch numbers.")
+    return sorted(set(milestones))
 
 
 def setup_device(args: argparse.Namespace) -> tuple[torch.device, int, int]:
@@ -390,6 +407,9 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"epochs={info['hyperparameters']['epochs']}, "
         f"batch_size={info['hyperparameters']['batch_size']}, "
         f"lr={info['hyperparameters']['lr']}, "
+        f"lr_milestones={info['hyperparameters']['lr_milestones']}, "
+        f"lr_gamma={info['hyperparameters']['lr_gamma']}, "
+        f"score_threshold={info['hyperparameters']['score_threshold']}, "
         f"num_workers={info['hyperparameters']['num_workers']}, "
         f"log_interval={info['hyperparameters']['log_interval']}"
     )
@@ -404,6 +424,7 @@ def main() -> None:
     args = parse_args()
     if args.log_interval <= 0:
         raise ValueError("--log_interval must be greater than 0.")
+    lr_milestones = parse_lr_milestones(args.lr_milestones)
     maybe_launch_distributed(args)
     device, rank, world_size = setup_device(args)
     is_main_process = rank == 0
@@ -438,7 +459,6 @@ def main() -> None:
     model = create_faster_rcnn_resnet50(
         num_classes=len(train_dataset.classes) + 1,
         pretrained_backbone=args.pretrained_backbone,
-        pretrained_coco=args.pretrained_coco,
     ).to(device)
     if world_size > 1:
         model = DistributedDataParallel(model, device_ids=[device.index])
@@ -450,7 +470,11 @@ def main() -> None:
         momentum=args.momentum,
         weight_decay=args.weight_decay,
     )
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        milestones=lr_milestones,
+        gamma=args.lr_gamma,
+    )
 
     started = time.strftime("%Y%m%d-%H%M%S")
     session_info = {
@@ -469,13 +493,14 @@ def main() -> None:
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
             "lr": args.lr,
+            "lr_milestones": lr_milestones,
+            "lr_gamma": args.lr_gamma,
             "momentum": args.momentum,
             "weight_decay": args.weight_decay,
             "score_threshold": args.score_threshold,
             "eval_max_images": args.eval_max_images,
             "log_interval": args.log_interval,
             "pretrained_backbone": args.pretrained_backbone,
-            "pretrained_coco": args.pretrained_coco,
         },
         "paths": {
             "train_data": str(Path(args.train_data)),
