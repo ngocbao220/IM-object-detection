@@ -505,6 +505,8 @@ def main() -> None:
     model = create_faster_rcnn_resnet50(
         num_classes=len(train_dataset.classes) + 1,
         pretrained_backbone=args.pretrained_backbone,
+        min_size=768,
+        max_size=1024
     ).to(device)
     if world_size > 1:
         model = DistributedDataParallel(model, device_ids=[device.index])

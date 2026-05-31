@@ -92,6 +92,8 @@ def main() -> None:
         num_classes=len(classes) + 1,
         box_score_thresh=args.score_threshold,
         box_nms_thresh=args.nms_threshold,
+        min_size=768,
+        max_size=1024
     ).to(device)
     checkpoint_path = Path(args.checkpoint)
     if checkpoint_path.exists():
