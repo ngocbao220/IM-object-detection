@@ -5,6 +5,7 @@ uv.lock
 .DS_Store
 .python-version
 *__pycache__
-*logs
 wandb/
 *.pth
+saved_results/checkpoints
+saved_results/metrics

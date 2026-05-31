@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", default="saved_results/checkpoints/best_model.pth")
     parser.add_argument("--classes", default="public/classes.json")
     parser.add_argument("--score_threshold", type=float, default=0.5)
+    parser.add_argument("--nms_threshold", type=float, default=0.5)
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -87,7 +88,11 @@ def main() -> None:
     idx_to_class = {idx + 1: name for idx, name in enumerate(classes)}
     device = get_device(args.device)
 
-    model = create_faster_rcnn_resnet50(num_classes=len(classes) + 1).to(device)
+    model = create_faster_rcnn_resnet50(
+        num_classes=len(classes) + 1,
+        box_score_thresh=args.score_threshold,
+        box_nms_thresh=args.nms_threshold,
+    ).to(device)
     checkpoint_path = Path(args.checkpoint)
     if checkpoint_path.exists():
         checkpoint = load_checkpoint(checkpoint_path, model, device)

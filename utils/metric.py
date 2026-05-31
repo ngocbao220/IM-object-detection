@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
 
 BBox = list[float]
+COCO_IOU_THRESHOLDS = [round(0.5 + 0.05 * index, 2) for index in range(10)]
 
 
 def box_area(box: BBox) -> float:
@@ -204,14 +205,182 @@ def evaluate_map(
     micro_precision, micro_recall = compute_precision_recall(
         total_tp, total_fp, total_gt - total_tp
     )
+    map_value = sum(aps) / len(aps) if aps else 0.0
     return {
-        "mAP@0.5": sum(aps) / len(aps) if aps else 0.0,
+        "mAP": map_value,
+        f"mAP@{iou_threshold:g}": map_value,
         "iou_threshold": iou_threshold,
         "micro_precision": micro_precision,
         "micro_recall": micro_recall,
         "num_ground_truth_boxes": total_gt,
         "num_predictions": sum(len(v) for v in predictions.values()),
         "per_class": per_class,
+    }
+
+
+def evaluate_extended_metrics(
+    ground_truth: dict[str, list[dict[str, Any]]],
+    predictions: dict[str, list[dict[str, Any]]],
+    classes: list[str],
+    iou_thresholds: list[float] | None = None,
+) -> dict[str, Any]:
+    """Compute COCO-style mAP metrics while retaining the mAP@0.5 output shape."""
+    thresholds = iou_thresholds or COCO_IOU_THRESHOLDS
+    results = {
+        threshold: evaluate_map(ground_truth, predictions, classes, threshold)
+        for threshold in thresholds
+    }
+    if 0.5 not in results or 0.75 not in results:
+        raise ValueError("Extended metrics require IoU thresholds 0.50 and 0.75.")
+
+    result = copy.deepcopy(results[0.5])
+    result["mAP@0.75"] = results[0.75]["mAP"]
+    result["mAP@0.5:0.95"] = sum(item["mAP"] for item in results.values()) / len(results)
+    result["iou_thresholds"] = thresholds
+
+    for class_name in classes:
+        class_results = {
+            threshold: results[threshold]["per_class"][class_name] for threshold in thresholds
+        }
+        result["per_class"][class_name]["ap@0.5"] = class_results[0.5]["ap"]
+        result["per_class"][class_name]["ap@0.75"] = class_results[0.75]["ap"]
+        result["per_class"][class_name]["ap@0.5:0.95"] = (
+            sum(item["ap"] for item in class_results.values()) / len(class_results)
+        )
+    return result
+
+
+def apply_confidence_and_nms(
+    predictions: dict[str, list[dict[str, Any]]],
+    confidence_threshold: float,
+    nms_threshold: float,
+) -> dict[str, list[dict[str, Any]]]:
+    """Filter prediction boxes using score threshold and class-aware NMS."""
+    filtered: dict[str, list[dict[str, Any]]] = {}
+    for image_id, boxes in predictions.items():
+        output_boxes: list[dict[str, Any]] = []
+        classes = sorted({box["class"] for box in boxes})
+        for class_name in classes:
+            candidates = sorted(
+                (
+                    copy.deepcopy(box)
+                    for box in boxes
+                    if box["class"] == class_name
+                    and float(box.get("confidence", 1.0)) >= confidence_threshold
+                ),
+                key=lambda box: float(box.get("confidence", 1.0)),
+                reverse=True,
+            )
+            kept: list[dict[str, Any]] = []
+            while candidates:
+                selected = candidates.pop(0)
+                kept.append(selected)
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if compute_iou(selected["bbox"], candidate["bbox"]) <= nms_threshold
+                ]
+            output_boxes.extend(kept)
+        filtered[image_id] = sorted(
+            output_boxes, key=lambda box: float(box.get("confidence", 1.0)), reverse=True
+        )
+    return filtered
+
+
+def analyze_detection_errors(
+    ground_truth: dict[str, list[dict[str, Any]]],
+    predictions: dict[str, list[dict[str, Any]]],
+    iou_threshold: float = 0.5,
+    localization_iou_threshold: float = 0.1,
+) -> dict[str, Any]:
+    """Classify FP/FN causes per image using greedy confidence-ordered matching."""
+    error_counts: defaultdict[str, int] = defaultdict(int)
+    per_image: dict[str, dict[str, Any]] = {}
+
+    for image_id in sorted(set(ground_truth) | set(predictions)):
+        gt_boxes = copy.deepcopy(ground_truth.get(image_id, []))
+        pred_boxes = sorted(
+            copy.deepcopy(predictions.get(image_id, [])),
+            key=lambda box: float(box.get("confidence", 1.0)),
+            reverse=True,
+        )
+        matched_gt: set[int] = set()
+        prediction_details = []
+        true_positives = 0
+
+        for prediction in pred_boxes:
+            overlaps = [
+                (index, compute_iou(prediction["bbox"], target["bbox"]))
+                for index, target in enumerate(gt_boxes)
+            ]
+            same_class_unmatched = [
+                (index, iou)
+                for index, iou in overlaps
+                if index not in matched_gt and gt_boxes[index]["class"] == prediction["class"]
+            ]
+            best_same = max(same_class_unmatched, key=lambda item: item[1], default=(-1, 0.0))
+
+            if best_same[1] >= iou_threshold:
+                matched_gt.add(best_same[0])
+                true_positives += 1
+                category = "true_positive"
+            else:
+                different_class = [
+                    (index, iou)
+                    for index, iou in overlaps
+                    if gt_boxes[index]["class"] != prediction["class"]
+                ]
+                best_different = max(
+                    different_class, key=lambda item: item[1], default=(-1, 0.0)
+                )
+                duplicate = any(
+                    index in matched_gt
+                    and gt_boxes[index]["class"] == prediction["class"]
+                    and iou >= iou_threshold
+                    for index, iou in overlaps
+                )
+                if best_different[1] >= iou_threshold:
+                    category = "classification_error"
+                elif best_same[1] >= localization_iou_threshold:
+                    category = "localization_error"
+                elif duplicate:
+                    category = "duplicate_detection"
+                else:
+                    category = "background_false_positive"
+                error_counts[category] += 1
+
+            prediction_details.append({**prediction, "error_type": category})
+
+        missed_boxes = [
+            target for index, target in enumerate(gt_boxes) if index not in matched_gt
+        ]
+        error_counts["missed_detection"] += len(missed_boxes)
+        false_positives = len(pred_boxes) - true_positives
+        if false_positives and missed_boxes:
+            image_category = "mixed"
+        elif missed_boxes:
+            image_category = "missed"
+        elif false_positives:
+            image_category = "incorrect"
+        else:
+            image_category = "good"
+
+        per_image[image_id] = {
+            "category": image_category,
+            "true_positives": true_positives,
+            "false_positives": false_positives,
+            "false_negatives": len(missed_boxes),
+            "predictions": prediction_details,
+            "missed_ground_truth": missed_boxes,
+        }
+
+    image_category_counts = Counter(item["category"] for item in per_image.values())
+    return {
+        "iou_threshold": iou_threshold,
+        "localization_iou_threshold": localization_iou_threshold,
+        "error_counts": dict(sorted(error_counts.items())),
+        "image_category_counts": dict(sorted(image_category_counts.items())),
+        "per_image": per_image,
     }
 
 
@@ -224,7 +393,9 @@ def evaluate_files(
     predictions_json = load_json(predictions_path)
     ground_truth = annotation_to_ground_truth(annotation)
     predictions = prediction_list_to_dict(predictions_json)
-    return evaluate_map(ground_truth, predictions, annotation["classes"], iou_threshold)
+    if iou_threshold != 0.5:
+        return evaluate_map(ground_truth, predictions, annotation["classes"], iou_threshold)
+    return evaluate_extended_metrics(ground_truth, predictions, annotation["classes"])
 
 
 def _self_test() -> None:
@@ -237,11 +408,18 @@ def _self_test() -> None:
         ]
     }
     result = evaluate_map(gt, preds, classes)
+    extended = evaluate_extended_metrics(gt, preds, classes)
+    analysis = analyze_detection_errors(gt, preds)
+    filtered = apply_confidence_and_nms(preds, confidence_threshold=0.5, nms_threshold=0.5)
     assert compute_iou([0, 0, 10, 10], [5, 5, 15, 15]) == 25 / 175
     assert result["per_class"]["person"]["true_positives"] == 1
     assert result["per_class"]["person"]["false_positives"] == 1
     assert result["mAP@0.5"] == 1.0
-    print(json.dumps(result, indent=2))
+    assert extended["mAP@0.75"] == 1.0
+    assert extended["mAP@0.5:0.95"] == 1.0
+    assert analysis["error_counts"]["background_false_positive"] == 1
+    assert len(filtered["image_1.jpg"]) == 1
+    print(json.dumps(extended, indent=2))
 
 
 def parse_args() -> argparse.Namespace:

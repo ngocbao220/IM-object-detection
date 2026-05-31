@@ -596,6 +596,272 @@ def show_predictions_slider(
     )
 
 
+def load_prediction_analysis(
+    predictions_path: str | Path = "saved_results/predictions.json",
+    ground_truth_path: str | Path = "public/annotations/val.json",
+    iou_threshold: float = 0.5,
+) -> dict[str, Any]:
+    """Load extended metrics and error details for notebook exploration."""
+    from utils.metric import (
+        analyze_detection_errors,
+        annotation_to_ground_truth,
+        evaluate_extended_metrics,
+        prediction_list_to_dict,
+    )
+
+    annotation = load_json(ground_truth_path)
+    ground_truth = annotation_to_ground_truth(annotation)
+    predictions = prediction_list_to_dict(load_json(predictions_path))
+    return {
+        "classes": annotation["classes"],
+        "ground_truth": ground_truth,
+        "predictions": predictions,
+        "metrics": evaluate_extended_metrics(ground_truth, predictions, annotation["classes"]),
+        "errors": analyze_detection_errors(ground_truth, predictions, iou_threshold),
+    }
+
+
+def prediction_metrics_table(analysis: dict[str, Any]) -> Any:
+    """Return one-row summary DataFrame for extended detection metrics."""
+    import pandas as pd
+
+    metrics = analysis["metrics"]
+    return pd.DataFrame(
+        [
+            {
+                "mAP@0.5": metrics["mAP@0.5"],
+                "mAP@0.75": metrics["mAP@0.75"],
+                "mAP@0.5:0.95": metrics["mAP@0.5:0.95"],
+                "precision": metrics["micro_precision"],
+                "recall": metrics["micro_recall"],
+                "ground_truth_boxes": metrics["num_ground_truth_boxes"],
+                "predictions": metrics["num_predictions"],
+            }
+        ]
+    )
+
+
+def per_class_ap_table(analysis: dict[str, Any]) -> Any:
+    """Return per-class AP, precision, recall, and detection counts."""
+    import pandas as pd
+
+    rows = []
+    for class_name, metrics in analysis["metrics"]["per_class"].items():
+        rows.append(
+            {
+                "class": class_name,
+                "AP@0.5": metrics["ap@0.5"],
+                "AP@0.75": metrics["ap@0.75"],
+                "AP@0.5:0.95": metrics["ap@0.5:0.95"],
+                "precision": metrics["precision"],
+                "recall": metrics["recall"],
+                "ground_truth": metrics["num_ground_truth"],
+                "predictions": metrics["num_predictions"],
+            }
+        )
+    return pd.DataFrame(rows).sort_values("AP@0.5:0.95", ascending=False).reset_index(drop=True)
+
+
+def detection_error_table(analysis: dict[str, Any]) -> Any:
+    """Return the main error categories sorted by frequency."""
+    import pandas as pd
+
+    return (
+        pd.DataFrame(
+            [
+                {"error_type": error_type, "count": count}
+                for error_type, count in analysis["errors"]["error_counts"].items()
+            ]
+        )
+        .sort_values("count", ascending=False)
+        .reset_index(drop=True)
+    )
+
+
+def plot_per_class_ap(analysis: dict[str, Any]) -> Any:
+    """Plot AP50, AP75, and AP50:95 for each class."""
+    import matplotlib.pyplot as plt
+
+    table = per_class_ap_table(analysis).set_index("class")
+    ax = table[["AP@0.5", "AP@0.75", "AP@0.5:0.95"]].plot.bar(
+        figsize=(10, 5),
+        ylim=(0, 1),
+        rot=0,
+        color=["#2ca02c", "#ff7f0e", "#1f77b4"],
+    )
+    ax.set_title("Average Precision by class")
+    ax.set_ylabel("AP")
+    ax.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+    return ax
+
+
+def plot_detection_errors(analysis: dict[str, Any]) -> Any:
+    """Plot the number of detections in each error category."""
+    import matplotlib.pyplot as plt
+
+    table = detection_error_table(analysis)
+    ax = table.plot.barh(
+        x="error_type",
+        y="count",
+        figsize=(9, 4),
+        legend=False,
+        color="#d62728",
+    )
+    ax.invert_yaxis()
+    ax.set_title("Detection error categories")
+    ax.set_xlabel("Count")
+    ax.set_ylabel("")
+    ax.grid(axis="x", alpha=0.3)
+    plt.tight_layout()
+    return ax
+
+
+def _select_analysis_images(
+    per_image: dict[str, dict[str, Any]],
+    categories: tuple[str, ...],
+    max_images: int,
+) -> list[str]:
+    grouped: defaultdict[str, list[str]] = defaultdict(list)
+    for image_id, details in per_image.items():
+        grouped[details["category"]].append(image_id)
+
+    quota = max(1, max_images // max(len(categories), 1))
+    selected = [image_id for category in categories for image_id in grouped[category][:quota]]
+    if len(selected) < max_images:
+        selected_set = set(selected)
+        remaining = [
+            image_id
+            for category in categories
+            for image_id in grouped[category]
+            if image_id not in selected_set
+        ]
+        selected.extend(remaining[: max_images - len(selected)])
+    return selected[:max_images]
+
+
+def show_prediction_analysis_slider(
+    analysis: dict[str, Any],
+    image_dir: str | Path = "public/val/images",
+    categories: tuple[str, ...] = ("good", "incorrect", "missed", "mixed"),
+    max_images: int = 50,
+) -> Any:
+    """Browse a balanced validation sample with TP, FP, FN, and error labels."""
+    import matplotlib.pyplot as plt
+
+    try:
+        import ipywidgets as widgets
+        from IPython.display import display
+    except ImportError as error:
+        raise RuntimeError("Install ipywidgets to use the notebook slider viewer.") from error
+
+    per_image = analysis["errors"]["per_image"]
+    image_ids = _select_analysis_images(per_image, categories, max_images)
+    if not image_ids:
+        raise ValueError("No images match the selected error categories.")
+
+    output = widgets.Output()
+    slider = widgets.IntSlider(
+        value=0,
+        min=0,
+        max=len(image_ids) - 1,
+        step=1,
+        description="Index",
+        continuous_update=False,
+    )
+
+    def render(index: int) -> None:
+        image_id = image_ids[index]
+        details = per_image[image_id]
+        image_path = resolve_image_path(image_dir, image_id)
+        with output:
+            output.clear_output(wait=True)
+            fig, ax = plt.subplots(figsize=(10, 7))
+            draw_boxes_on_axis(ax, image_path, [], classes=analysis["classes"])
+            for prediction in details["predictions"]:
+                is_true_positive = prediction["error_type"] == "true_positive"
+                draw_boxes_on_axis(
+                    ax,
+                    image_path,
+                    [prediction],
+                    classes=analysis["classes"],
+                    label_prefix=(
+                        "Pred TP: "
+                        if is_true_positive
+                        else f"Pred {prediction['error_type']}: "
+                    ),
+                    edge_color="#2ca02c" if is_true_positive else "#d62728",
+                )
+            draw_boxes_on_axis(
+                ax,
+                image_path,
+                analysis["ground_truth"].get(image_id, []),
+                classes=analysis["classes"],
+                label_prefix="GT: ",
+                edge_color="black",
+                line_style="--",
+                label_position="bottom_right",
+            )
+            ax.set_title(
+                f"{index + 1}/{len(image_ids)} | {details['category'].upper()} | {image_id} | "
+                f"TP={details['true_positives']} FP={details['false_positives']} "
+                f"FN={details['false_negatives']}"
+            )
+            plt.show()
+            plt.close(fig)
+
+    slider.observe(lambda change: render(change["new"]), names="value")
+    render(0)
+    display(widgets.VBox([slider, output]))
+    return slider
+
+
+def tune_prediction_thresholds(
+    predictions_path: str | Path = "saved_results/predictions_raw.json",
+    ground_truth_path: str | Path = "public/annotations/val.json",
+    confidence_thresholds: list[float] | None = None,
+    nms_thresholds: list[float] | None = None,
+    iou_threshold: float = 0.5,
+) -> Any:
+    """Run an offline confidence/NMS sweep and return a sorted DataFrame."""
+    import pandas as pd
+
+    from utils.metric import annotation_to_ground_truth, prediction_list_to_dict
+    from utils.tune_thresholds import tune_thresholds
+
+    annotation = load_json(ground_truth_path)
+    results = tune_thresholds(
+        annotation_to_ground_truth(annotation),
+        prediction_list_to_dict(load_json(predictions_path)),
+        annotation["classes"],
+        confidence_thresholds or [0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+        nms_thresholds or [0.3, 0.4, 0.5, 0.6, 0.7],
+        iou_threshold,
+    )
+    return pd.DataFrame(results)
+
+
+def plot_threshold_tuning_heatmap(results: Any, metric: str = "mAP") -> Any:
+    """Plot an offline confidence/NMS sweep as a heatmap."""
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    if metric not in results.columns:
+        raise ValueError(f"Unknown metric {metric!r}. Choose one of: {list(results.columns)}")
+    matrix = results.pivot(
+        index="confidence_threshold",
+        columns="nms_threshold",
+        values=metric,
+    )
+    fig, ax = plt.subplots(figsize=(8, 5))
+    sns.heatmap(matrix, annot=True, fmt=".4f", cmap="YlGnBu", ax=ax)
+    ax.set_title(f"Threshold tuning: {metric}")
+    ax.set_xlabel("NMS threshold")
+    ax.set_ylabel("Confidence threshold")
+    fig.tight_layout()
+    return ax
+
+
 def draw_boxes(
     image_path: str | Path,
     boxes: list[dict[str, Any]],

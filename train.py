@@ -28,7 +28,7 @@ from models.faster_rcnn import create_faster_rcnn_resnet50
 from models.modules import get_device, move_targets_to_device, save_checkpoint_with_alias
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
 from utils.helper import save_json
-from utils.metric import evaluate_map
+from utils.metric import evaluate_extended_metrics
 
 
 def parse_args() -> argparse.Namespace:
@@ -317,6 +317,8 @@ def format_epoch_summary(
         [
             f"├── Val Loss   : {val_logs.get('loss', 0.0):.4f}",
             f"├── mAP@0.5    : {val_metrics['mAP@0.5']:.4f}",
+            f"├── mAP@0.75   : {val_metrics['mAP@0.75']:.4f}",
+            f"├── mAP@0.5:0.95 : {val_metrics['mAP@0.5:0.95']:.4f}",
             f"├── Precision  : {val_metrics['micro_precision']:.4f}",
             f"├── Recall     : {val_metrics['micro_recall']:.4f}",
             f"├── GT Boxes   : {val_metrics['num_ground_truth_boxes']}",
@@ -328,7 +330,8 @@ def format_epoch_summary(
     for index, (class_name, metrics) in enumerate(per_class.items()):
         branch = "└──" if index == len(per_class) - 1 else "├──"
         lines.append(
-            f"│   {branch} {class_name:<8}: AP={metrics['ap']:.4f}, "
+            f"│   {branch} {class_name:<8}: AP50={metrics['ap@0.5']:.4f}, "
+            f"AP75={metrics['ap@0.75']:.4f}, AP50:95={metrics['ap@0.5:0.95']:.4f}, "
             f"P={metrics['precision']:.4f}, R={metrics['recall']:.4f}"
         )
     lines.extend([f"├── LR         : {lr:.6f}", f"└── Time       : {elapsed_seconds:.1f}s"])
@@ -639,7 +642,7 @@ def main() -> None:
                 max_images=args.eval_max_images,
             )
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
-            val_metrics = evaluate_map(val_gt, val_predictions, val_dataset.classes)
+            val_metrics = evaluate_extended_metrics(val_gt, val_predictions, val_dataset.classes)
             append_session_log(text_log_path, f"Epoch {epoch:02d} metrics computed. Saving artifacts.")
             epoch_seconds = time.perf_counter() - epoch_started
 
@@ -650,6 +653,8 @@ def main() -> None:
                 **{f"train/{k}": v for k, v in train_logs.items()},
                 **{f"val/{k}": v for k, v in val_logs.items()},
                 "val/mAP@0.5": val_metrics["mAP@0.5"],
+                "val/mAP@0.75": val_metrics["mAP@0.75"],
+                "val/mAP@0.5:0.95": val_metrics["mAP@0.5:0.95"],
                 "val/micro_precision": val_metrics["micro_precision"],
                 "val/micro_recall": val_metrics["micro_recall"],
             }

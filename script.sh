@@ -6,7 +6,10 @@ set -euo pipefail
 #   bash script.sh download
 #   bash script.sh train
 #   bash script.sh predict
+#   bash script.sh predict-raw
 #   bash script.sh evaluate
+#   bash script.sh analyze
+#   bash script.sh tune-thresholds
 #   bash script.sh augment-ablation
 #   bash script.sh augment-summary
 #   bash script.sh all
@@ -24,6 +27,9 @@ CHECKPOINT="${CHECKPOINT:-${SAVED_RESULTS_DIR}/checkpoints/best_model.pth}"
 PREDICT_IMAGE_DIR="${PREDICT_IMAGE_DIR:-./public/val/images}"
 PREDICTIONS_OUTPUT="${PREDICTIONS_OUTPUT:-${SAVED_RESULTS_DIR}/predictions.json}"
 EVAL_OUTPUT="${EVAL_OUTPUT:-${SAVED_RESULTS_DIR}/evaluation.json}"
+RAW_PREDICTIONS_OUTPUT="${RAW_PREDICTIONS_OUTPUT:-${SAVED_RESULTS_DIR}/predictions_raw.json}"
+ANALYSIS_OUTPUT_DIR="${ANALYSIS_OUTPUT_DIR:-${SAVED_RESULTS_DIR}/analysis}"
+THRESHOLD_TUNING_OUTPUT="${THRESHOLD_TUNING_OUTPUT:-${SAVED_RESULTS_DIR}/threshold_tuning.json}"
 
 EPOCHS="${EPOCHS:-30}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
@@ -33,6 +39,9 @@ LR="${LR:-0.005}"
 LR_MILESTONES="${LR_MILESTONES:-15,25}"
 LR_GAMMA="${LR_GAMMA:-0.1}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
+NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
+CONFIDENCE_THRESHOLDS="${CONFIDENCE_THRESHOLDS:-0.2,0.3,0.4,0.5,0.6,0.7}"
+NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 GPU="${GPU:-}"
 GPUS="${GPUS:-}"
@@ -128,7 +137,17 @@ predict() {
     --image_dir "${PREDICT_IMAGE_DIR}" \
     --output "${PREDICTIONS_OUTPUT}" \
     --checkpoint "${CHECKPOINT}" \
-    --score_threshold "${SCORE_THRESHOLD}"
+    --score_threshold "${SCORE_THRESHOLD}" \
+    --nms_threshold "${NMS_THRESHOLD}"
+}
+
+predict_raw() {
+  python predict.py \
+    --image_dir "${PREDICT_IMAGE_DIR}" \
+    --output "${RAW_PREDICTIONS_OUTPUT}" \
+    --checkpoint "${CHECKPOINT}" \
+    --score_threshold 0.01 \
+    --nms_threshold 1.0
 }
 
 evaluate() {
@@ -136,6 +155,24 @@ evaluate() {
     --ground_truth "${VAL_DATA}" \
     --predictions "${PREDICTIONS_OUTPUT}" \
     --output "${EVAL_OUTPUT}"
+}
+
+analyze() {
+  python -m utils.analyze_predictions \
+    --ground_truth "${VAL_DATA}" \
+    --predictions "${PREDICTIONS_OUTPUT}" \
+    --image_dir "${VAL_IMAGE_DIR}" \
+    --output_dir "${ANALYSIS_OUTPUT_DIR}" \
+    --max_visualizations 50
+}
+
+tune_thresholds() {
+  python -m utils.tune_thresholds \
+    --ground_truth "${VAL_DATA}" \
+    --predictions "${RAW_PREDICTIONS_OUTPUT}" \
+    --output "${THRESHOLD_TUNING_OUTPUT}" \
+    --confidence_thresholds "${CONFIDENCE_THRESHOLDS}" \
+    --nms_thresholds "${NMS_THRESHOLDS}"
 }
 
 run_augmentation_experiment() {
@@ -197,8 +234,17 @@ case "${1:-help}" in
   predict)
     predict
     ;;
+  predict-raw)
+    predict_raw
+    ;;
   evaluate)
     evaluate
+    ;;
+  analyze)
+    analyze
+    ;;
+  tune-thresholds)
+    tune_thresholds
     ;;
   augment-ablation)
     augment_ablation
@@ -215,6 +261,7 @@ case "${1:-help}" in
     train
     predict
     evaluate
+    analyze
     ;;
   help|--help|-h)
     sed -n '1,22p' "$0"

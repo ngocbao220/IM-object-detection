@@ -14,6 +14,7 @@ def create_faster_rcnn_resnet50(
     min_size: int = 512,
     max_size: int = 768,
     box_score_thresh: float = 0.05,
+    box_nms_thresh: float = 0.5,
 ) -> torch.nn.Module:
     """Create Faster R-CNN with an optional ImageNet-pretrained ResNet-50 backbone.
 
@@ -29,6 +30,7 @@ def create_faster_rcnn_resnet50(
         min_size=min_size,
         max_size=max_size,
         box_score_thresh=box_score_thresh,
+        box_nms_thresh=box_nms_thresh,
     )
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
