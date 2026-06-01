@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Tune confidence and NMS thresholds offline.")
     parser.add_argument("--ground_truth", required=True, type=Path)
     parser.add_argument("--predictions", required=True, type=Path)
-    parser.add_argument("--output", default="saved_results/threshold_tuning.json", type=Path)
+    parser.add_argument("--output", default="saved_results/baseline/threshold_tuning.json", type=Path)
     parser.add_argument("--confidence_thresholds", default="0.2,0.3,0.4,0.5,0.6,0.7")
     parser.add_argument("--nms_thresholds", default="0.3,0.4,0.5,0.6,0.7")
     parser.add_argument("--iou_threshold", type=float, default=0.5)

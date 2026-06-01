@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 import os
 import platform
 import subprocess
@@ -27,7 +25,7 @@ except ImportError:  # pragma: no cover
 from models.faster_rcnn import create_faster_rcnn_resnet50
 from models.modules import get_device, move_targets_to_device, save_checkpoint_with_alias
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
-from utils.helper import print_run_configuration, save_json
+from utils.helper import print_run_configuration
 from utils.metric import evaluate_extended_metrics
 
 
@@ -64,7 +62,11 @@ def parse_args() -> argparse.Namespace:
         help="Use ResNet-50 ImageNet weights. Faster R-CNN detection heads remain randomly initialized.",
     )
     parser.add_argument("--wandb_project", default="object-detection-final")
-    parser.add_argument("--wandb_run_name", default=None)
+    parser.add_argument(
+        "--wandb_run_name",
+        default=None,
+        help="Wandb run name and saved_results subdirectory name.",
+    )
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--eval_max_images", type=int, default=0)
     parser.add_argument("--log_interval", type=int, default=20, help="Append progress to session log every N batches.")
@@ -275,16 +277,6 @@ def ground_truth_from_dataset(dataset: OdDataset, max_images: int = 0) -> dict[s
     return result
 
 
-def append_csv(path: Path, row: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    exists = path.exists()
-    with path.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if not exists:
-            writer.writeheader()
-        writer.writerow(row)
-
-
 def append_session_log(path: Path, message: str, timestamp: bool = True) -> None:
     """Append and flush immediately so a running cloud job is observable."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -388,6 +380,7 @@ def format_session_info(info: dict[str, Any]) -> str:
     lines = [
         "========== Training Session ==========",
         f"Started: {info['started_at']}",
+        f"Run name: {info['run_name']}",
         f"Device: {info['device']['selected_device']}",
     ]
     if info["distributed"]["world_size"] > 1:
@@ -466,16 +459,23 @@ def main() -> None:
     device, rank, world_size = setup_device(args)
     is_main_process = rank == 0
 
-    saved_results_dir = Path(args.checkpoint_dir or args.saved_results_dir)
+    started = time.strftime("%Y%m%d-%H%M%S")
+    run_name = args.wandb_run_name or f"session-{started}"
+    if run_name in {".", ".."} or Path(run_name).name != run_name:
+        raise ValueError("--wandb_run_name must be a single folder-safe name.")
+    saved_results_root = Path(args.checkpoint_dir or args.saved_results_dir)
+    saved_results_dir = saved_results_root / run_name
     if is_main_process:
         print_run_configuration(
             "Training Configuration",
             {
+                "run_name": run_name,
                 "train_data": Path(args.train_data),
                 "val_data": Path(args.val_data),
                 "train_image_dir": Path(args.image_dir),
                 "val_image_dir": Path(args.val_image_dir),
-                "saved_results_dir": saved_results_dir,
+                "saved_results_root": saved_results_root,
+                "run_results_dir": saved_results_dir,
                 "device": device,
                 "world_size": world_size,
                 "gpus": args.gpus or args.gpu or "auto",
@@ -504,8 +504,6 @@ def main() -> None:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log_dir = saved_results_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    metrics_dir = saved_results_dir / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
 
     train_transforms = (
         build_train_transforms(
@@ -557,9 +555,9 @@ def main() -> None:
         gamma=args.lr_gamma,
     )
 
-    started = time.strftime("%Y%m%d-%H%M%S")
     session_info = {
         "started_at": started,
+        "run_name": run_name,
         "classes": train_dataset.classes,
         "class_to_idx": train_dataset.class_to_idx,
         "dataset": {
@@ -598,15 +596,12 @@ def main() -> None:
             "saved_results_dir": str(saved_results_dir),
             "checkpoint_dir": str(checkpoint_dir),
             "log_dir": str(log_dir),
-            "metrics_dir": str(metrics_dir),
             "last_checkpoint": str(checkpoint_dir / f"last_model-{started}.pth"),
             "best_checkpoint": str(checkpoint_dir / f"best_model-{started}.pth"),
         },
     }
-    session_info_path = log_dir / f"session-{started}.json"
-    text_log_path = log_dir / f"session-{started}.log"
+    text_log_path = log_dir / "session.log"
     if is_main_process:
-        save_json(session_info, session_info_path)
         session_header = format_session_info(session_info)
         print(f"\n{session_header}\n")
         append_session_log(text_log_path, session_header, timestamp=False)
@@ -619,14 +614,12 @@ def main() -> None:
         else:
             run = wandb.init(
                 project=args.wandb_project,
-                name=args.wandb_run_name,
+                name=run_name,
                 config=vars(args) | session_info,
             )
 
     best_map = -1.0
     epochs_without_improvement = 0
-    jsonl_path = log_dir / f"train-{started}.jsonl"
-    csv_path = log_dir / f"train-{started}.csv"
     last_checkpoint_path = checkpoint_dir / f"last_model-{started}.pth"
     best_checkpoint_path = checkpoint_dir / f"best_model-{started}.pth"
     last_checkpoint_alias = checkpoint_dir / "last_model.pth"
@@ -693,14 +686,10 @@ def main() -> None:
                 "val/micro_precision": val_metrics["micro_precision"],
                 "val/micro_recall": val_metrics["micro_recall"],
             }
-            append_csv(csv_path, row)
-            with jsonl_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(row) + "\n")
             if run is not None:
                 wandb.log(row, step=epoch)
 
             epoch_metrics = {"epoch": epoch, "train": train_logs, "val": val_logs, **val_metrics}
-            save_json(epoch_metrics, metrics_dir / f"epoch_{epoch:03d}.json")
             save_checkpoint_with_alias(
                 last_checkpoint_path,
                 last_checkpoint_alias,

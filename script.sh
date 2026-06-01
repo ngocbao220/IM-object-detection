@@ -22,14 +22,16 @@ VAL_DATA="${VAL_DATA:-./public/annotations/val.json}"
 TRAIN_IMAGE_DIR="${TRAIN_IMAGE_DIR:-./public/train/images}"
 VAL_IMAGE_DIR="${VAL_IMAGE_DIR:-./public/val/images}"
 SAVED_RESULTS_DIR="${SAVED_RESULTS_DIR:-./saved_results}"
-CHECKPOINT="${CHECKPOINT:-${SAVED_RESULTS_DIR}/checkpoints/best_model.pth}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-baseline}"
+RUN_RESULTS_DIR="${SAVED_RESULTS_DIR}/${WANDB_RUN_NAME}"
+CHECKPOINT="${CHECKPOINT:-${RUN_RESULTS_DIR}/checkpoints/best_model.pth}"
 
 PREDICT_IMAGE_DIR="${PREDICT_IMAGE_DIR:-./public/val/images}"
-PREDICTIONS_OUTPUT="${PREDICTIONS_OUTPUT:-${SAVED_RESULTS_DIR}/predictions.json}"
-EVAL_OUTPUT="${EVAL_OUTPUT:-${SAVED_RESULTS_DIR}/evaluation.json}"
-RAW_PREDICTIONS_OUTPUT="${RAW_PREDICTIONS_OUTPUT:-${SAVED_RESULTS_DIR}/predictions_raw.json}"
-ANALYSIS_OUTPUT_DIR="${ANALYSIS_OUTPUT_DIR:-${SAVED_RESULTS_DIR}/analysis}"
-THRESHOLD_TUNING_OUTPUT="${THRESHOLD_TUNING_OUTPUT:-${SAVED_RESULTS_DIR}/threshold_tuning.json}"
+PREDICTIONS_OUTPUT="${PREDICTIONS_OUTPUT:-${RUN_RESULTS_DIR}/predictions.json}"
+EVAL_OUTPUT="${EVAL_OUTPUT:-${RUN_RESULTS_DIR}/evaluation.json}"
+RAW_PREDICTIONS_OUTPUT="${RAW_PREDICTIONS_OUTPUT:-${RUN_RESULTS_DIR}/predictions_raw.json}"
+ANALYSIS_OUTPUT_DIR="${ANALYSIS_OUTPUT_DIR:-${RUN_RESULTS_DIR}/analysis}"
+THRESHOLD_TUNING_OUTPUT="${THRESHOLD_TUNING_OUTPUT:-${RUN_RESULTS_DIR}/threshold_tuning.json}"
 
 EPOCHS="${EPOCHS:-30}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
@@ -43,10 +45,9 @@ NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
 CONFIDENCE_THRESHOLDS="${CONFIDENCE_THRESHOLDS:-0.2,0.3,0.4,0.5,0.6,0.7}"
 NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
-GPU="${GPU:-}"
+GPU="${GPU:-0}"
 GPUS="${GPUS:-}"
 USE_WANDB="${USE_WANDB:-0}"
-WANDB_RUN_NAME="${WANDB_RUN_NAME:-}"
 PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
 AUGMENTATION="${AUGMENTATION:-1}"
 HORIZONTAL_FLIP_PROBABILITY="${HORIZONTAL_FLIP_PROBABILITY:-0.5}"
@@ -59,6 +60,10 @@ ABLATION_RESULTS_DIR="${ABLATION_RESULTS_DIR:-./saved_results/augmentation_ablat
 ABLATION_EPOCHS="${ABLATION_EPOCHS:-30}"
 
 install() {
+  echo "============ Dependency Installation ============"
+  echo "pytorch_index_url: ${PYTORCH_INDEX_URL}"
+  echo "requirements: requirements.txt"
+  echo "================================================="
   python -m pip install --upgrade pip
   python -m pip install torch torchvision --index-url "${PYTORCH_INDEX_URL}"
   python -m pip install -r requirements.txt
@@ -83,6 +88,7 @@ train() {
     --image_dir "${TRAIN_IMAGE_DIR}"
     --val_image_dir "${VAL_IMAGE_DIR}"
     --saved_results_dir "${SAVED_RESULTS_DIR}"
+    --wandb_run_name "${WANDB_RUN_NAME}"
     --epochs "${EPOCHS}"
     --batch_size "${BATCH_SIZE}"
     --num_workers "${NUM_WORKERS}"
@@ -106,9 +112,6 @@ train() {
 
   if [[ "${USE_WANDB}" == "1" ]]; then
     train_args+=(--use_wandb)
-    if [[ -n "${WANDB_RUN_NAME}" ]]; then
-      train_args+=(--wandb_run_name "${WANDB_RUN_NAME}")
-    fi
   fi
 
   if [[ "${PRETRAINED_BACKBONE}" == "1" ]]; then
@@ -142,6 +145,12 @@ predict() {
 }
 
 evaluate() {
+  echo "============ Prediction Evaluation ============"
+  echo "ground_truth: ${VAL_DATA}"
+  echo "predictions: ${PREDICTIONS_OUTPUT}"
+  echo "output: ${EVAL_OUTPUT}"
+  echo "iou_threshold: 0.5"
+  echo "==============================================="
   python public/tools/evaluate_predictions.py \
     --ground_truth "${VAL_DATA}" \
     --predictions "${PREDICTIONS_OUTPUT}" \
@@ -179,7 +188,7 @@ run_augmentation_experiment() {
   echo "results=${ABLATION_RESULTS_DIR}/${experiment_name}"
   echo "============================================================"
 
-  SAVED_RESULTS_DIR="${ABLATION_RESULTS_DIR}/${experiment_name}" \
+  SAVED_RESULTS_DIR="${ABLATION_RESULTS_DIR}" \
   EPOCHS="${ABLATION_EPOCHS}" \
   AUGMENTATION="${augmentation}" \
   HORIZONTAL_FLIP_PROBABILITY="${flip_probability}" \
@@ -200,6 +209,9 @@ augment_ablation() {
 }
 
 summarize_augmentation_ablation() {
+  echo "============ Augmentation Summary ============"
+  echo "results_dir: ${ABLATION_RESULTS_DIR}"
+  echo "=============================================="
   python utils/summarize_augmentation_ablation.py \
     --results_dir "${ABLATION_RESULTS_DIR}"
 }

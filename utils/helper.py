@@ -610,7 +610,7 @@ def show_predictions_slider(
 
 
 def load_prediction_analysis(
-    predictions_path: str | Path = "saved_results/predictions.json",
+    predictions_path: str | Path = "saved_results/baseline/predictions.json",
     ground_truth_path: str | Path = "public/annotations/val.json",
     iou_threshold: float = 0.5,
 ) -> dict[str, Any]:
@@ -830,7 +830,7 @@ def show_prediction_analysis_slider(
 
 
 def tune_prediction_thresholds(
-    predictions_path: str | Path = "saved_results/predictions_raw.json",
+    predictions_path: str | Path = "saved_results/baseline/predictions_raw.json",
     ground_truth_path: str | Path = "public/annotations/val.json",
     confidence_thresholds: list[float] | None = None,
     nms_thresholds: list[float] | None = None,

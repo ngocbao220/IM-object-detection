@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ground_truth", required=True, type=Path)
     parser.add_argument("--predictions", required=True, type=Path)
     parser.add_argument("--image_dir", required=True, type=Path)
-    parser.add_argument("--output_dir", default="saved_results/analysis", type=Path)
+    parser.add_argument("--output_dir", default="saved_results/baseline/analysis", type=Path)
     parser.add_argument("--max_visualizations", type=int, default=50)
     parser.add_argument("--iou_threshold", type=float, default=0.5)
     return parser.parse_args()

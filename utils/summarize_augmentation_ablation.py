@@ -5,18 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-
-def load_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as file:
-        return json.load(file)
+import torch
 
 
 def find_best_epoch(experiment_dir: Path) -> dict[str, Any] | None:
-    metrics_files = sorted((experiment_dir / "metrics").glob("epoch_*.json"))
-    if not metrics_files:
+    checkpoint_path = experiment_dir / "checkpoints" / "best_model.pth"
+    if not checkpoint_path.exists():
         return None
-    metrics = [load_json(path) for path in metrics_files]
-    return max(metrics, key=lambda item: item["mAP@0.5"])
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    return checkpoint.get("metrics") or None
 
 
 def build_summary(results_dir: Path) -> list[dict[str, Any]]:
@@ -66,7 +63,7 @@ def main() -> None:
 
     summary = build_summary(args.results_dir)
     if not summary:
-        raise FileNotFoundError(f"No epoch metrics found under {args.results_dir}")
+        raise FileNotFoundError(f"No best-model checkpoint metrics found under {args.results_dir}")
 
     args.results_dir.mkdir(parents=True, exist_ok=True)
     json_path = args.results_dir / "summary.json"
