@@ -5,7 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from utils.helper import draw_boxes_on_axis, save_json
+from utils.helper import draw_boxes_on_axis, print_run_configuration, save_json
 from utils.metric import (
     analyze_detection_errors,
     annotation_to_ground_truth,
@@ -118,6 +118,17 @@ def save_gallery(
 
 def main() -> None:
     args = parse_args()
+    print_run_configuration(
+        "Prediction Analysis",
+        {
+            "ground_truth": args.ground_truth,
+            "predictions": args.predictions,
+            "image_dir": args.image_dir,
+            "output_dir": args.output_dir,
+            "max_visualizations": args.max_visualizations,
+            "iou_threshold": args.iou_threshold,
+        },
+    )
     annotation = load_json(args.ground_truth)
     ground_truth = annotation_to_ground_truth(annotation)
     predictions = prediction_list_to_dict(load_json(args.predictions))

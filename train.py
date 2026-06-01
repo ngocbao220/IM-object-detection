@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
 from models.faster_rcnn import create_faster_rcnn_resnet50
 from models.modules import get_device, move_targets_to_device, save_checkpoint_with_alias
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
-from utils.helper import save_json
+from utils.helper import print_run_configuration, save_json
 from utils.metric import evaluate_extended_metrics
 
 
@@ -467,6 +467,39 @@ def main() -> None:
     is_main_process = rank == 0
 
     saved_results_dir = Path(args.checkpoint_dir or args.saved_results_dir)
+    if is_main_process:
+        print_run_configuration(
+            "Training Configuration",
+            {
+                "train_data": Path(args.train_data),
+                "val_data": Path(args.val_data),
+                "train_image_dir": Path(args.image_dir),
+                "val_image_dir": Path(args.val_image_dir),
+                "saved_results_dir": saved_results_dir,
+                "device": device,
+                "world_size": world_size,
+                "gpus": args.gpus or args.gpu or "auto",
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "num_workers": args.num_workers,
+                "lr": args.lr,
+                "lr_milestones": lr_milestones,
+                "lr_gamma": args.lr_gamma,
+                "momentum": args.momentum,
+                "weight_decay": args.weight_decay,
+                "pretrained_backbone": args.pretrained_backbone,
+                "augmentation": args.augmentation,
+                "horizontal_flip_probability": args.horizontal_flip_probability,
+                "color_jitter_probability": args.color_jitter_probability,
+                "grayscale_probability": args.grayscale_probability,
+                "early_stopping": args.early_stopping,
+                "early_stopping_patience": args.early_stopping_patience,
+                "score_threshold_for_validation": args.score_threshold,
+                "model": "Faster R-CNN ResNet-50 FPN",
+                "min_size": 768,
+                "max_size": 1024,
+            },
+        )
     checkpoint_dir = saved_results_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log_dir = saved_results_dir / "logs"

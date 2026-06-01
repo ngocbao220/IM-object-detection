@@ -141,15 +141,6 @@ predict() {
     --nms_threshold "${NMS_THRESHOLD}"
 }
 
-predict_raw() {
-  python predict.py \
-    --image_dir "${PREDICT_IMAGE_DIR}" \
-    --output "${RAW_PREDICTIONS_OUTPUT}" \
-    --checkpoint "${CHECKPOINT}" \
-    --score_threshold 0.01 \
-    --nms_threshold 1.0
-}
-
 evaluate() {
   python public/tools/evaluate_predictions.py \
     --ground_truth "${VAL_DATA}" \
@@ -233,9 +224,6 @@ case "${1:-help}" in
     ;;
   predict)
     predict
-    ;;
-  predict-raw)
-    predict_raw
     ;;
   evaluate)
     evaluate

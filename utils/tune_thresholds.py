@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from utils.helper import save_json
+from utils.helper import print_run_configuration, save_json
 from utils.metric import (
     annotation_to_ground_truth,
     apply_confidence_and_nms,
@@ -66,14 +66,28 @@ def tune_thresholds(
 
 def main() -> None:
     args = parse_args()
+    confidence_thresholds = parse_float_list(args.confidence_thresholds)
+    nms_thresholds = parse_float_list(args.nms_thresholds)
+    print_run_configuration(
+        "Threshold Tuning",
+        {
+            "ground_truth": args.ground_truth,
+            "predictions": args.predictions,
+            "output": args.output,
+            "confidence_thresholds": confidence_thresholds,
+            "nms_thresholds": nms_thresholds,
+            "num_combinations": len(confidence_thresholds) * len(nms_thresholds),
+            "iou_threshold": args.iou_threshold,
+        },
+    )
     annotation = load_json(args.ground_truth)
     predictions = prediction_list_to_dict(load_json(args.predictions))
     results = tune_thresholds(
         annotation_to_ground_truth(annotation),
         predictions,
         annotation["classes"],
-        parse_float_list(args.confidence_thresholds),
-        parse_float_list(args.nms_thresholds),
+        confidence_thresholds,
+        nms_thresholds,
         args.iou_threshold,
     )
     save_json({"best": results[0], "results": results}, args.output)

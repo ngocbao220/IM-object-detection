@@ -27,6 +27,19 @@ def save_json(data: Any, path: str | Path, indent: int = 2) -> None:
         f.write("\n")
 
 
+def print_run_configuration(title: str, parameters: dict[str, Any]) -> None:
+    """Print a readable configuration block before a CLI task starts."""
+    border = "=" * 12
+    print(f"{border} {title} {border}", flush=True)
+    for key, value in parameters.items():
+        if isinstance(value, Path):
+            value = str(value)
+        elif isinstance(value, (dict, list, tuple)):
+            value = json.dumps(value, ensure_ascii=False)
+        print(f"{key}: {value}", flush=True)
+    print("=" * (len(title) + len(border) * 2 + 2), flush=True)
+
+
 def find_kaggle_dataset_slug(
     metadata_paths: list[str | Path] | None = None,
 ) -> str | None:
@@ -949,6 +962,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.download_dataset:
+        print_run_configuration(
+            "Dataset Download",
+            {
+                "dataset_slug": args.dataset_slug or find_kaggle_dataset_slug(),
+                "local_zip": args.local_zip or "not set",
+                "dataset_output_dir": Path(args.dataset_output_dir),
+                "dataset_dir_name": args.dataset_dir_name,
+                "force_download": args.force_download,
+            },
+        )
         download_public_dataset_from_kaggle(
             dataset_slug=args.dataset_slug,
             local_zip=args.local_zip,
@@ -958,6 +981,14 @@ def main() -> None:
         )
         return
 
+    print_run_configuration(
+        "Dataset Debug Sample",
+        {
+            "annotation": Path(args.annotation),
+            "image_dir": Path(args.image_dir),
+            "output": Path(args.output),
+        },
+    )
     summary = dataset_summary(args.annotation)
     print(json.dumps(summary, indent=2))
     output = visualize_random_sample(args.annotation, args.image_dir, args.output)

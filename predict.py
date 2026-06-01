@@ -12,7 +12,7 @@ from tqdm.auto import tqdm
 
 from models.faster_rcnn import create_faster_rcnn_resnet50
 from models.modules import get_device, load_checkpoint
-from utils.helper import load_classes
+from utils.helper import load_classes, print_run_configuration
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -87,6 +87,25 @@ def main() -> None:
     classes = load_classes(args.classes)
     idx_to_class = {idx + 1: name for idx, name in enumerate(classes)}
     device = get_device(args.device)
+    checkpoint_path = Path(args.checkpoint)
+
+    print_run_configuration(
+        "Prediction Session",
+        {
+            "image_source": Path(args.image_dir),
+            "num_images": len(image_paths),
+            "output": Path(args.output),
+            "checkpoint": checkpoint_path,
+            "checkpoint_exists": checkpoint_path.exists(),
+            "classes": classes,
+            "device": device,
+            "score_threshold": args.score_threshold,
+            "nms_threshold": args.nms_threshold,
+            "model": "Faster R-CNN ResNet-50 FPN",
+            "min_size": 768,
+            "max_size": 1024,
+        },
+    )
 
     model = create_faster_rcnn_resnet50(
         num_classes=len(classes) + 1,
@@ -95,7 +114,6 @@ def main() -> None:
         min_size=768,
         max_size=1024
     ).to(device)
-    checkpoint_path = Path(args.checkpoint)
     if checkpoint_path.exists():
         checkpoint = load_checkpoint(checkpoint_path, model, device)
         if checkpoint.get("classes"):
@@ -109,7 +127,8 @@ def main() -> None:
     with output.open("w", encoding="utf-8") as f:
         json.dump(predictions, f, ensure_ascii=False, indent=2)
         f.write("\n")
-    print(f"Saved {len(predictions)} image predictions to {output}")
+    num_boxes = sum(len(item["boxes"]) for item in predictions)
+    print(f"Saved {len(predictions)} image predictions with {num_boxes} boxes to {output}")
 
 
 if __name__ == "__main__":
