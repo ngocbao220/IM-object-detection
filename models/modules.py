@@ -24,6 +24,7 @@ def save_checkpoint(
     epoch: int,
     classes: list[str],
     metrics: dict[str, Any] | None = None,
+    model_config: dict[str, Any] | None = None,
 ) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -34,6 +35,7 @@ def save_checkpoint(
             "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
             "classes": classes,
             "metrics": metrics or {},
+            "model_config": model_config or {},
         },
         output,
     )
@@ -47,9 +49,10 @@ def save_checkpoint_with_alias(
     epoch: int,
     classes: list[str],
     metrics: dict[str, Any] | None = None,
+    model_config: dict[str, Any] | None = None,
 ) -> None:
     """Save a timestamped checkpoint and refresh a stable latest alias."""
-    save_checkpoint(path, model, optimizer, epoch, classes, metrics)
+    save_checkpoint(path, model, optimizer, epoch, classes, metrics, model_config)
     alias = Path(alias_path)
     alias.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, alias)

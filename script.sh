@@ -42,6 +42,9 @@ LR_MILESTONES="${LR_MILESTONES:-15,25}"
 LR_GAMMA="${LR_GAMMA:-0.1}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
 NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
+BACKBONE="${BACKBONE:-resnet101}"
+MIN_SIZE="${MIN_SIZE:-768}"
+MAX_SIZE="${MAX_SIZE:-1024}"
 CONFIDENCE_THRESHOLDS="${CONFIDENCE_THRESHOLDS:-0.2,0.3,0.4,0.5,0.6,0.7}"
 NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
@@ -97,6 +100,9 @@ train() {
     --lr_milestones "${LR_MILESTONES}"
     --lr_gamma "${LR_GAMMA}"
     --score_threshold "${SCORE_THRESHOLD}"
+    --backbone "${BACKBONE}"
+    --min_size "${MIN_SIZE}"
+    --max_size "${MAX_SIZE}"
     --horizontal_flip_probability "${HORIZONTAL_FLIP_PROBABILITY}"
     --color_jitter_probability "${COLOR_JITTER_PROBABILITY}"
     --grayscale_probability "${GRAYSCALE_PROBABILITY}"
@@ -141,7 +147,10 @@ predict() {
     --output "${PREDICTIONS_OUTPUT}" \
     --checkpoint "${CHECKPOINT}" \
     --score_threshold "${SCORE_THRESHOLD}" \
-    --nms_threshold "${NMS_THRESHOLD}"
+    --nms_threshold "${NMS_THRESHOLD}" \
+    --backbone "${BACKBONE}" \
+    --min_size "${MIN_SIZE}" \
+    --max_size "${MAX_SIZE}"
 }
 
 evaluate() {

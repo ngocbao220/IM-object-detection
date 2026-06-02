@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover
     wandb = None
 
-from models.faster_rcnn import create_faster_rcnn_resnet50
+from models.faster_rcnn import BACKBONE_WEIGHTS, create_faster_rcnn
 from models.modules import get_device, move_targets_to_device, save_checkpoint_with_alias
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
 from utils.helper import print_run_configuration
@@ -30,7 +30,7 @@ from utils.metric import evaluate_extended_metrics
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train Faster R-CNN ResNet-50.")
+    parser = argparse.ArgumentParser(description="Train Faster R-CNN with a ResNet FPN backbone.")
     parser.add_argument("--train_data", required=True)
     parser.add_argument("--val_data", required=True)
     parser.add_argument("--image_dir", required=True)
@@ -44,6 +44,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=0.0005)
     parser.add_argument("--score_threshold", type=float, default=0.5)
+    parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
+    parser.add_argument("--min_size", type=int, default=768)
+    parser.add_argument("--max_size", type=int, default=1024)
     parser.add_argument(
         "--lr_milestones",
         default="15,25",
@@ -59,7 +62,7 @@ def parse_args() -> argparse.Namespace:
         "--pretrained_backbone",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Use ResNet-50 ImageNet weights. Faster R-CNN detection heads remain randomly initialized.",
+        help="Use ImageNet weights for the selected backbone. Detection heads remain randomly initialized.",
     )
     parser.add_argument("--wandb_project", default="object-detection-final")
     parser.add_argument(
@@ -411,7 +414,7 @@ def format_session_info(info: dict[str, Any]) -> str:
     lines.append(f"Train class counts: {info['dataset']['train']['class_counts']}")
     lines.append(f"Val class counts: {info['dataset']['val']['class_counts']}")
     lines.append(
-        "Model: Faster R-CNN ResNet-50 FPN "
+        f"Model: Faster R-CNN {info['model']['backbone']} FPN "
         f"({info['model']['trainable_parameters']:,}/"
         f"{info['model']['total_parameters']:,} trainable/total params)"
     )
@@ -422,6 +425,9 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"lr={info['hyperparameters']['lr']}, "
         f"lr_milestones={info['hyperparameters']['lr_milestones']}, "
         f"lr_gamma={info['hyperparameters']['lr_gamma']}, "
+        f"backbone={info['hyperparameters']['backbone']}, "
+        f"min_size={info['hyperparameters']['min_size']}, "
+        f"max_size={info['hyperparameters']['max_size']}, "
         f"score_threshold={info['hyperparameters']['score_threshold']}, "
         f"augmentation={info['hyperparameters']['augmentation']}, "
         f"early_stopping={info['hyperparameters']['early_stopping']}, "
@@ -447,6 +453,8 @@ def main() -> None:
         raise ValueError("--early_stopping_patience must be greater than 0.")
     if args.early_stopping_min_delta < 0:
         raise ValueError("--early_stopping_min_delta must be greater than or equal to 0.")
+    if args.min_size <= 0 or args.max_size <= 0 or args.min_size > args.max_size:
+        raise ValueError("--min_size and --max_size must be positive with min_size <= max_size.")
     lr_milestones = parse_lr_milestones(args.lr_milestones)
     probabilities = [
         args.horizontal_flip_probability,
@@ -495,9 +503,9 @@ def main() -> None:
                 "early_stopping": args.early_stopping,
                 "early_stopping_patience": args.early_stopping_patience,
                 "score_threshold_for_validation": args.score_threshold,
-                "model": "Faster R-CNN ResNet-50 FPN",
-                "min_size": 768,
-                "max_size": 1024,
+                "model": f"Faster R-CNN {args.backbone} FPN",
+                "min_size": args.min_size,
+                "max_size": args.max_size,
             },
         )
     checkpoint_dir = saved_results_dir / "checkpoints"
@@ -533,11 +541,12 @@ def main() -> None:
         collate_fn=collate_fn,
     )
 
-    model = create_faster_rcnn_resnet50(
+    model = create_faster_rcnn(
         num_classes=len(train_dataset.classes) + 1,
+        backbone_name=args.backbone,
         pretrained_backbone=args.pretrained_backbone,
-        min_size=768,
-        max_size=1024
+        min_size=args.min_size,
+        max_size=args.max_size,
     ).to(device)
     if world_size > 1:
         model = DistributedDataParallel(model, device_ids=[device.index])
@@ -566,7 +575,7 @@ def main() -> None:
         },
         "device": get_device_info(device),
         "distributed": {"world_size": world_size, "rank": rank, "gpus": args.gpus},
-        "model": count_parameters(model),
+        "model": {"backbone": args.backbone, **count_parameters(model)},
         "hyperparameters": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
@@ -577,6 +586,9 @@ def main() -> None:
             "momentum": args.momentum,
             "weight_decay": args.weight_decay,
             "score_threshold": args.score_threshold,
+            "backbone": args.backbone,
+            "min_size": args.min_size,
+            "max_size": args.max_size,
             "eval_max_images": args.eval_max_images,
             "log_interval": args.log_interval,
             "pretrained_backbone": args.pretrained_backbone,
@@ -624,6 +636,11 @@ def main() -> None:
     best_checkpoint_path = checkpoint_dir / f"best_model-{started}.pth"
     last_checkpoint_alias = checkpoint_dir / "last_model.pth"
     best_checkpoint_alias = checkpoint_dir / "best_model.pth"
+    model_config = {
+        "backbone": args.backbone,
+        "min_size": args.min_size,
+        "max_size": args.max_size,
+    }
 
     for epoch in range(1, args.epochs + 1):
         should_stop = False
@@ -698,6 +715,7 @@ def main() -> None:
                 epoch,
                 train_dataset.classes,
                 epoch_metrics,
+                model_config,
             )
             current_map = val_metrics["mAP@0.5"]
             if current_map > best_map + args.early_stopping_min_delta:
@@ -711,6 +729,7 @@ def main() -> None:
                     epoch,
                     train_dataset.classes,
                     epoch_metrics,
+                    model_config,
                 )
                 append_session_log(
                     text_log_path,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ from PIL import Image
 from torchvision.transforms import functional as F
 from tqdm.auto import tqdm
 
-from models.faster_rcnn import create_faster_rcnn_resnet50
+from models.faster_rcnn import BACKBONE_WEIGHTS, create_faster_rcnn
 from models.modules import get_device, load_checkpoint
 from utils.helper import load_classes, print_run_configuration
 
@@ -26,6 +27,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--classes", default="public/classes.json")
     parser.add_argument("--score_threshold", type=float, default=0.5)
     parser.add_argument("--nms_threshold", type=float, default=0.5)
+    parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
+    parser.add_argument("--min_size", type=int, default=768)
+    parser.add_argument("--max_size", type=int, default=1024)
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -57,7 +61,7 @@ def predict_images(
     model.eval()
     results: list[dict[str, Any]] = []
 
-    for path in tqdm(image_paths, desc="predict"):
+    for path in tqdm(image_paths, desc="predict", file=sys.stdout):
         image = Image.open(path).convert("RGB")
         width, height = image.size
         tensor = F.to_tensor(image).to(device)
@@ -83,11 +87,22 @@ def predict_images(
 
 def main() -> None:
     args = parse_args()
+    if args.min_size <= 0 or args.max_size <= 0 or args.min_size > args.max_size:
+        raise ValueError("--min_size and --max_size must be positive with min_size <= max_size.")
     image_paths = list_images(args.image_dir)
     classes = load_classes(args.classes)
     idx_to_class = {idx + 1: name for idx, name in enumerate(classes)}
     device = get_device(args.device)
     checkpoint_path = Path(args.checkpoint)
+    checkpoint_metadata = (
+        torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        if checkpoint_path.exists()
+        else {}
+    )
+    model_config = checkpoint_metadata.get("model_config", {})
+    backbone = model_config.get("backbone", args.backbone)
+    min_size = int(model_config.get("min_size", args.min_size))
+    max_size = int(model_config.get("max_size", args.max_size))
 
     print_run_configuration(
         "Prediction Session",
@@ -101,18 +116,20 @@ def main() -> None:
             "device": device,
             "score_threshold": args.score_threshold,
             "nms_threshold": args.nms_threshold,
-            "model": "Faster R-CNN ResNet-50 FPN",
-            "min_size": 768,
-            "max_size": 1024,
+            "model": f"Faster R-CNN {backbone} FPN",
+            "min_size": min_size,
+            "max_size": max_size,
+            "model_config_source": "checkpoint" if model_config else "CLI",
         },
     )
 
-    model = create_faster_rcnn_resnet50(
+    model = create_faster_rcnn(
         num_classes=len(classes) + 1,
+        backbone_name=backbone,
         box_score_thresh=args.score_threshold,
         box_nms_thresh=args.nms_threshold,
-        min_size=768,
-        max_size=1024
+        min_size=min_size,
+        max_size=max_size,
     ).to(device)
     if checkpoint_path.exists():
         checkpoint = load_checkpoint(checkpoint_path, model, device)
