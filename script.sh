@@ -56,6 +56,8 @@ AUGMENTATION="${AUGMENTATION:-0}"
 HORIZONTAL_FLIP_PROBABILITY="${HORIZONTAL_FLIP_PROBABILITY:-0.5}"
 COLOR_JITTER_PROBABILITY="${COLOR_JITTER_PROBABILITY:-0.3}"
 GRAYSCALE_PROBABILITY="${GRAYSCALE_PROBABILITY:-0.05}"
+OVERSAMPLE_CLASS="${OVERSAMPLE_CLASS:-}"
+OVERSAMPLE_FACTOR="${OVERSAMPLE_FACTOR:-1.0}"
 EARLY_STOPPING="${EARLY_STOPPING:-1}"
 EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-7}"
 EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-0.001}"
@@ -106,6 +108,7 @@ train() {
     --horizontal_flip_probability "${HORIZONTAL_FLIP_PROBABILITY}"
     --color_jitter_probability "${COLOR_JITTER_PROBABILITY}"
     --grayscale_probability "${GRAYSCALE_PROBABILITY}"
+    --oversample_factor "${OVERSAMPLE_FACTOR}"
     --early_stopping_patience "${EARLY_STOPPING_PATIENCE}"
     --early_stopping_min_delta "${EARLY_STOPPING_MIN_DELTA}"
   )
@@ -114,6 +117,10 @@ train() {
     train_args+=(--gpus "${GPUS}")
   elif [[ -n "${GPU}" ]]; then
     train_args+=(--gpu "${GPU}")
+  fi
+
+  if [[ -n "${OVERSAMPLE_CLASS}" ]]; then
+    train_args+=(--oversample_class "${OVERSAMPLE_CLASS}")
   fi
 
   if [[ "${USE_WANDB}" == "1" ]]; then

@@ -13,7 +13,7 @@ from typing import Any, Callable
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm.auto import tqdm
 
@@ -82,6 +82,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizontal_flip_probability", type=float, default=0.5)
     parser.add_argument("--color_jitter_probability", type=float, default=0.3)
     parser.add_argument("--grayscale_probability", type=float, default=0.05)
+    parser.add_argument(
+        "--oversample_class",
+        default=None,
+        help="Optional class name whose images are sampled more often, e.g. chair.",
+    )
+    parser.add_argument("--oversample_factor", type=float, default=1.0)
     parser.add_argument(
         "--early_stopping",
         action=argparse.BooleanOptionalAction,
@@ -351,6 +357,47 @@ def count_dataset_boxes(dataset: OdDataset) -> dict[str, Any]:
     }
 
 
+def build_class_oversampling_sampler(
+    dataset: OdDataset,
+    class_name: str | None,
+    factor: float,
+) -> tuple[WeightedRandomSampler | None, dict[str, Any]]:
+    if not class_name:
+        return None, {"enabled": False}
+    if class_name not in dataset.classes:
+        raise ValueError(f"--oversample_class must be one of {dataset.classes}.")
+    if factor < 1.0:
+        raise ValueError("--oversample_factor must be greater than or equal to 1.0.")
+
+    weights = []
+    num_target_images = 0
+    for image in dataset.images:
+        image_id = image["id"]
+        has_target_class = any(
+            ann["class"] == class_name for ann in dataset.annotations_by_image.get(image_id, [])
+        )
+        if has_target_class:
+            num_target_images += 1
+        weights.append(factor if has_target_class else 1.0)
+
+    if num_target_images == 0:
+        raise ValueError(f"No training images contain oversample class: {class_name}.")
+
+    sampler = WeightedRandomSampler(
+        weights=torch.as_tensor(weights, dtype=torch.double),
+        num_samples=len(weights),
+        replacement=True,
+    )
+    return sampler, {
+        "enabled": True,
+        "class": class_name,
+        "factor": factor,
+        "target_images": num_target_images,
+        "total_images": len(dataset),
+        "target_image_ratio": num_target_images / max(len(dataset), 1),
+    }
+
+
 def get_device_info(device: torch.device) -> dict[str, Any]:
     info: dict[str, Any] = {
         "selected_device": str(device),
@@ -413,6 +460,16 @@ def format_session_info(info: dict[str, Any]) -> str:
     )
     lines.append(f"Train class counts: {info['dataset']['train']['class_counts']}")
     lines.append(f"Val class counts: {info['dataset']['val']['class_counts']}")
+    if info["oversampling"]["enabled"]:
+        lines.append(
+            "Oversampling: "
+            f"class={info['oversampling']['class']}, "
+            f"factor={info['oversampling']['factor']}, "
+            f"target_images={info['oversampling']['target_images']}/"
+            f"{info['oversampling']['total_images']}"
+        )
+    else:
+        lines.append("Oversampling: disabled")
     lines.append(
         f"Model: Faster R-CNN {info['model']['backbone']} FPN "
         f"({info['model']['trainable_parameters']:,}/"
@@ -463,6 +520,8 @@ def main() -> None:
     ]
     if any(value < 0 or value > 1 for value in probabilities):
         raise ValueError("Augmentation probabilities must be between 0 and 1.")
+    if args.oversample_factor < 1.0:
+        raise ValueError("--oversample_factor must be greater than or equal to 1.0.")
     maybe_launch_distributed(args)
     device, rank, world_size = setup_device(args)
     is_main_process = rank == 0
@@ -500,6 +559,8 @@ def main() -> None:
                 "horizontal_flip_probability": args.horizontal_flip_probability,
                 "color_jitter_probability": args.color_jitter_probability,
                 "grayscale_probability": args.grayscale_probability,
+                "oversample_class": args.oversample_class or "disabled",
+                "oversample_factor": args.oversample_factor,
                 "early_stopping": args.early_stopping,
                 "early_stopping_patience": args.early_stopping_patience,
                 "score_threshold_for_validation": args.score_threshold,
@@ -524,7 +585,18 @@ def main() -> None:
     )
     train_dataset = OdDataset(args.train_data, args.image_dir, transforms=train_transforms)
     val_dataset = OdDataset(args.val_data, args.val_image_dir, classes=train_dataset.classes)
-    train_sampler = DistributedSampler(train_dataset, shuffle=True) if world_size > 1 else None
+    oversampling_sampler, oversampling_info = build_class_oversampling_sampler(
+        train_dataset,
+        args.oversample_class,
+        args.oversample_factor,
+    )
+    if world_size > 1 and oversampling_sampler is not None:
+        raise RuntimeError("--oversample_class is currently supported only for single-GPU training.")
+    train_sampler = (
+        DistributedSampler(train_dataset, shuffle=True)
+        if world_size > 1
+        else oversampling_sampler
+    )
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -573,6 +645,7 @@ def main() -> None:
             "train": count_dataset_boxes(train_dataset),
             "val": count_dataset_boxes(val_dataset),
         },
+        "oversampling": oversampling_info,
         "device": get_device_info(device),
         "distributed": {"world_size": world_size, "rank": rank, "gpus": args.gpus},
         "model": {"backbone": args.backbone, **count_parameters(model)},
@@ -596,6 +669,8 @@ def main() -> None:
             "horizontal_flip_probability": args.horizontal_flip_probability,
             "color_jitter_probability": args.color_jitter_probability,
             "grayscale_probability": args.grayscale_probability,
+            "oversample_class": args.oversample_class,
+            "oversample_factor": args.oversample_factor,
             "early_stopping": args.early_stopping,
             "early_stopping_patience": args.early_stopping_patience,
             "early_stopping_min_delta": args.early_stopping_min_delta,
@@ -648,7 +723,7 @@ def main() -> None:
         current_lr = optimizer.param_groups[0]["lr"]
         if is_main_process:
             append_session_log(text_log_path, f"Epoch [{epoch:02d}/{args.epochs:02d}] started.")
-        if train_sampler is not None:
+        if isinstance(train_sampler, DistributedSampler):
             train_sampler.set_epoch(epoch)
         train_logs = train_one_epoch(
             model,

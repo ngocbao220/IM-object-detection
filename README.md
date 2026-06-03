@@ -35,6 +35,22 @@ BACKBONE=resnet101 MIN_SIZE=768 MAX_SIZE=1024 \
 WANDB_RUN_NAME=resnet101-768x1024 GPU=0 bash script.sh train
 ```
 
+To focus training on a weak class such as `chair`, enable image-level
+oversampling. This keeps the epoch length unchanged, but samples images that
+contain `chair` more often:
+
+```bash
+OVERSAMPLE_CLASS=chair OVERSAMPLE_FACTOR=2.0 \
+BACKBONE=resnet101 MIN_SIZE=512 MAX_SIZE=768 \
+AUGMENTATION=1 HORIZONTAL_FLIP_PROBABILITY=0.5 \
+COLOR_JITTER_PROBABILITY=0.0 GRAYSCALE_PROBABILITY=0.0 \
+WANDB_RUN_NAME=resnet101-512x768-fliponly-chairx2 GPU=0 \
+bash script.sh train
+```
+
+Use `OVERSAMPLE_FACTOR=1.5` or `2.0` first. Larger values can improve recall
+for `chair`, but may increase false positives or hurt stronger classes.
+
 Training artifacts are stored under:
 
 ```text
