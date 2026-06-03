@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -41,13 +42,15 @@ def list_images(path: str | Path) -> list[Path]:
     return sorted(p for p in path.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS)
 
 
-def clamp_box(box: list[float], width: int, height: int) -> list[int]:
+def clamp_box(box: list[float], width: int, height: int) -> list[int] | None:
     x1, y1, x2, y2 = box
-    x1 = max(0, min(width, x1))
-    x2 = max(0, min(width, x2))
-    y1 = max(0, min(height, y1))
-    y2 = max(0, min(height, y2))
-    return [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))]
+    x1 = int(math.floor(max(0, min(width, x1))))
+    x2 = int(math.ceil(max(0, min(width, x2))))
+    y1 = int(math.floor(max(0, min(height, y1))))
+    y2 = int(math.ceil(max(0, min(height, y2))))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return [x1, y1, x2, y2]
 
 
 @torch.no_grad()
@@ -73,11 +76,14 @@ def predict_images(
             if confidence < score_threshold:
                 continue
             label_id = int(label.detach().cpu())
+            bbox = clamp_box([float(v) for v in box.detach().cpu().tolist()], width, height)
+            if bbox is None:
+                continue
             boxes.append(
                 {
                     "class": idx_to_class.get(label_id, str(label_id)),
                     "confidence": round(confidence, 6),
-                    "bbox": clamp_box([float(v) for v in box.detach().cpu().tolist()], width, height),
+                    "bbox": bbox,
                 }
             )
 
