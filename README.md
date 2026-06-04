@@ -78,6 +78,23 @@ saved_results/<WANDB_RUN_NAME>/
     └── session.log
 ```
 
+Resume the same phase from its stable last checkpoint:
+
+```bash
+WANDB_RUN_NAME=resnet101-512x768-custom-anchor \
+RESUME_LAST=1 EPOCHS=50 GPU=0 \
+bash script.sh train
+```
+
+Or resume from an explicit checkpoint path:
+
+```bash
+WANDB_RUN_NAME=resnet101-512x768-custom-anchor \
+RESUME_FROM=saved_results/resnet101-512x768-custom-anchor/checkpoints/last_model.pth \
+EPOCHS=50 GPU=0 \
+bash script.sh train
+```
+
 4. Predict and evaluate the same phase:
 
 ```bash

@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover
     wandb = None
 
 from models.faster_rcnn import BACKBONE_WEIGHTS, create_faster_rcnn
-from models.modules import get_device, move_targets_to_device, save_checkpoint_with_alias
+from models.modules import get_device, load_checkpoint, move_targets_to_device, save_checkpoint_with_alias
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
 from utils.helper import print_run_configuration
 from utils.metric import evaluate_extended_metrics
@@ -37,6 +37,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val_image_dir", required=True)
     parser.add_argument("--saved_results_dir", default="./saved_results")
     parser.add_argument("--checkpoint_dir", default=None, help="Deprecated alias for --saved_results_dir.")
+    parser.add_argument(
+        "--resume_from",
+        default=None,
+        help="Optional checkpoint path to continue training from, e.g. saved_results/run/checkpoints/last_model.pth.",
+    )
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--num_workers", type=int, default=2)
@@ -157,6 +162,23 @@ def parse_optional_float_tuple(value: str) -> tuple[float, ...] | None:
     if any(item <= 0 for item in parsed):
         raise ValueError("Anchor ratios must contain positive values.")
     return parsed
+
+
+def set_scheduler_resume_state(
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.MultiStepLR,
+    completed_epoch: int,
+    base_lr: float,
+    milestones: list[int],
+    gamma: float,
+) -> None:
+    """Set LR for the next epoch after resuming a checkpoint saved before scheduler.step()."""
+    decay_count = sum(1 for milestone in milestones if milestone <= completed_epoch)
+    resume_lr = base_lr * (gamma ** decay_count)
+    for group in optimizer.param_groups:
+        group["lr"] = resume_lr
+    scheduler.last_epoch = completed_epoch
+    scheduler._last_lr = [resume_lr for _ in optimizer.param_groups]  # noqa: SLF001
 
 
 def setup_device(args: argparse.Namespace) -> tuple[torch.device, int, int]:
@@ -488,6 +510,15 @@ def format_session_info(info: dict[str, Any]) -> str:
     )
     lines.append(f"Train class counts: {info['dataset']['train']['class_counts']}")
     lines.append(f"Val class counts: {info['dataset']['val']['class_counts']}")
+    if info["resume"]["enabled"]:
+        lines.append(
+            "Resume: "
+            f"checkpoint={info['resume']['checkpoint']}, "
+            f"checkpoint_epoch={info['resume']['checkpoint_epoch']}, "
+            f"start_epoch={info['resume']['start_epoch']}"
+        )
+    else:
+        lines.append("Resume: disabled")
     if info["oversampling"]["enabled"]:
         lines.append(
             "Oversampling: "
@@ -577,6 +608,7 @@ def main() -> None:
                 "val_image_dir": Path(args.val_image_dir),
                 "saved_results_root": saved_results_root,
                 "run_results_dir": saved_results_dir,
+                "resume_from": args.resume_from or "disabled",
                 "device": device,
                 "world_size": world_size,
                 "gpus": args.gpus or args.gpu or "auto",
@@ -673,6 +705,22 @@ def main() -> None:
         milestones=lr_milestones,
         gamma=args.lr_gamma,
     )
+    resume_checkpoint = None
+    resume_epoch = 0
+    if args.resume_from:
+        resume_path = Path(args.resume_from)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"--resume_from checkpoint does not exist: {resume_path}")
+        resume_checkpoint = load_checkpoint(resume_path, unwrap_model(model), device, optimizer)
+        resume_epoch = int(resume_checkpoint.get("epoch", 0))
+        set_scheduler_resume_state(
+            optimizer,
+            scheduler,
+            resume_epoch,
+            args.lr,
+            lr_milestones,
+            args.lr_gamma,
+        )
 
     session_info = {
         "started_at": started,
@@ -682,6 +730,12 @@ def main() -> None:
         "dataset": {
             "train": count_dataset_boxes(train_dataset),
             "val": count_dataset_boxes(val_dataset),
+        },
+        "resume": {
+            "enabled": resume_checkpoint is not None,
+            "checkpoint": str(Path(args.resume_from)) if args.resume_from else None,
+            "checkpoint_epoch": resume_epoch if resume_checkpoint is not None else None,
+            "start_epoch": resume_epoch + 1 if resume_checkpoint is not None else 1,
         },
         "oversampling": oversampling_info,
         "device": get_device_info(device),
@@ -745,12 +799,30 @@ def main() -> None:
                 config=vars(args) | session_info,
             )
 
-    best_map = -1.0
-    epochs_without_improvement = 0
     last_checkpoint_path = checkpoint_dir / f"last_model-{started}.pth"
     best_checkpoint_path = checkpoint_dir / f"best_model-{started}.pth"
     last_checkpoint_alias = checkpoint_dir / "last_model.pth"
     best_checkpoint_alias = checkpoint_dir / "best_model.pth"
+    best_map = -1.0
+    if resume_checkpoint is not None:
+        best_map = float(
+            resume_checkpoint.get("metrics", {}).get(
+                "mAP@0.5",
+                resume_checkpoint.get("metrics", {}).get("val/mAP@0.5", -1.0),
+            )
+        )
+        if best_checkpoint_alias.exists():
+            best_checkpoint = torch.load(best_checkpoint_alias, map_location="cpu")
+            best_map = max(
+                best_map,
+                float(
+                    best_checkpoint.get("metrics", {}).get(
+                        "mAP@0.5",
+                        best_checkpoint.get("metrics", {}).get("val/mAP@0.5", -1.0),
+                    )
+                ),
+            )
+    epochs_without_improvement = 0
     model_config = {
         "backbone": args.backbone,
         "min_size": args.min_size,
@@ -759,7 +831,7 @@ def main() -> None:
         "anchor_ratios": anchor_ratios,
     }
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(resume_epoch + 1, args.epochs + 1):
         should_stop = False
         epoch_started = time.perf_counter()
         current_lr = optimizer.param_groups[0]["lr"]

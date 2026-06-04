@@ -25,6 +25,8 @@ SAVED_RESULTS_DIR="${SAVED_RESULTS_DIR:-./saved_results}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-baseline}"
 RUN_RESULTS_DIR="${SAVED_RESULTS_DIR}/${WANDB_RUN_NAME}"
 CHECKPOINT="${CHECKPOINT:-${RUN_RESULTS_DIR}/checkpoints/best_model.pth}"
+RESUME_FROM="${RESUME_FROM:-}"
+RESUME_LAST="${RESUME_LAST:-0}"
 
 PREDICT_IMAGE_DIR="${PREDICT_IMAGE_DIR:-./public/val/images}"
 PREDICTIONS_OUTPUT="${PREDICTIONS_OUTPUT:-${RUN_RESULTS_DIR}/predictions.json}"
@@ -89,6 +91,11 @@ download() {
 }
 
 train() {
+  resume_checkpoint="${RESUME_FROM}"
+  if [[ "${RESUME_LAST}" == "1" && -z "${resume_checkpoint}" ]]; then
+    resume_checkpoint="${RUN_RESULTS_DIR}/checkpoints/last_model.pth"
+  fi
+
   train_args=(
     --train_data "${TRAIN_DATA}"
     --val_data "${VAL_DATA}"
@@ -123,6 +130,10 @@ train() {
 
   if [[ -n "${OVERSAMPLE_CLASS}" ]]; then
     train_args+=(--oversample_class "${OVERSAMPLE_CLASS}")
+  fi
+
+  if [[ -n "${resume_checkpoint}" ]]; then
+    train_args+=(--resume_from "${resume_checkpoint}")
   fi
 
   if [[ -n "${ANCHOR_SIZES}" ]]; then
