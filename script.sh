@@ -45,6 +45,7 @@ LR_GAMMA="${LR_GAMMA:-0.1}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
 NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
 BACKBONE="${BACKBONE:-resnet101}"
+CUSTOM_MODEL="${CUSTOM_MODEL:-0}"
 MIN_SIZE="${MIN_SIZE:-768}"
 MAX_SIZE="${MAX_SIZE:-1024}"
 ANCHOR_SIZES="${ANCHOR_SIZES:-}"
@@ -136,6 +137,10 @@ train() {
     train_args+=(--resume_from "${resume_checkpoint}")
   fi
 
+  if [[ "${CUSTOM_MODEL}" == "1" ]]; then
+    train_args+=(--custom)
+  fi
+
   if [[ -n "${ANCHOR_SIZES}" ]]; then
     train_args+=(--anchor_sizes "${ANCHOR_SIZES}")
   fi
@@ -187,6 +192,10 @@ predict() {
 
   if [[ -n "${ANCHOR_RATIOS}" ]]; then
     predict_args+=(--anchor_ratios "${ANCHOR_RATIOS}")
+  fi
+
+  if [[ "${CUSTOM_MODEL}" == "1" ]]; then
+    predict_args+=(--custom)
   fi
 
   python predict.py "${predict_args[@]}"

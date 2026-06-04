@@ -30,7 +30,7 @@ from utils.metric import evaluate_extended_metrics
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a custom Faster R-CNN with a ResNet backbone.")
+    parser = argparse.ArgumentParser(description="Train Faster R-CNN with a ResNet backbone.")
     parser.add_argument("--train_data", required=True)
     parser.add_argument("--val_data", required=True)
     parser.add_argument("--image_dir", required=True)
@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight_decay", type=float, default=0.0005)
     parser.add_argument("--score_threshold", type=float, default=0.5)
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
+    parser.add_argument(
+        "--custom",
+        action="store_true",
+        help="Use the repository's custom Faster R-CNN implementation. Default uses torchvision detection.",
+    )
     parser.add_argument("--min_size", type=int, default=768)
     parser.add_argument("--max_size", type=int, default=1024)
     parser.add_argument(
@@ -530,7 +535,7 @@ def format_session_info(info: dict[str, Any]) -> str:
     else:
         lines.append("Oversampling: disabled")
     lines.append(
-        f"Model: Custom Faster R-CNN {info['model']['backbone']} "
+        f"Model: {info['model']['implementation']} Faster R-CNN {info['model']['backbone']} "
         f"({info['model']['trainable_parameters']:,}/"
         f"{info['model']['total_parameters']:,} trainable/total params)"
     )
@@ -544,8 +549,9 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"backbone={info['hyperparameters']['backbone']}, "
         f"min_size={info['hyperparameters']['min_size']}, "
         f"max_size={info['hyperparameters']['max_size']}, "
-        f"anchor_sizes={info['hyperparameters']['anchor_sizes'] or 'custom_default'}, "
-        f"anchor_ratios={info['hyperparameters']['anchor_ratios'] or 'custom_default'}, "
+        f"custom_model={info['hyperparameters']['custom_model']}, "
+        f"anchor_sizes={info['hyperparameters']['anchor_sizes'] or 'model_default'}, "
+        f"anchor_ratios={info['hyperparameters']['anchor_ratios'] or 'model_default'}, "
         f"score_threshold={info['hyperparameters']['score_threshold']}, "
         f"augmentation={info['hyperparameters']['augmentation']}, "
         f"early_stopping={info['hyperparameters']['early_stopping']}, "
@@ -578,6 +584,8 @@ def main() -> None:
     anchor_ratios = parse_optional_float_tuple(args.anchor_ratios)
     if anchor_sizes is not None and not anchor_sizes:
         raise ValueError("--anchor_sizes must contain at least one value.")
+    if not args.custom and anchor_sizes is not None and len(anchor_sizes) != 5:
+        raise ValueError("--anchor_sizes must contain exactly 5 values when using torchvision Faster R-CNN.")
     probabilities = [
         args.horizontal_flip_probability,
         args.color_jitter_probability,
@@ -630,11 +638,12 @@ def main() -> None:
                 "early_stopping": args.early_stopping,
                 "early_stopping_patience": args.early_stopping_patience,
                 "score_threshold_for_validation": args.score_threshold,
-                "model": f"Custom Faster R-CNN {args.backbone}",
+                "model": f"{'Custom' if args.custom else 'Torchvision'} Faster R-CNN {args.backbone}",
+                "custom_model": args.custom,
                 "min_size": args.min_size,
                 "max_size": args.max_size,
-                "anchor_sizes": anchor_sizes or "custom_default",
-                "anchor_ratios": anchor_ratios or "custom_default",
+                "anchor_sizes": anchor_sizes or "model_default",
+                "anchor_ratios": anchor_ratios or "model_default",
             },
         )
     checkpoint_dir = saved_results_dir / "checkpoints"
@@ -689,6 +698,7 @@ def main() -> None:
         max_size=args.max_size,
         anchor_sizes=anchor_sizes,
         anchor_ratios=anchor_ratios,
+        custom=args.custom,
     ).to(device)
     if world_size > 1:
         model = DistributedDataParallel(model, device_ids=[device.index])
@@ -740,7 +750,11 @@ def main() -> None:
         "oversampling": oversampling_info,
         "device": get_device_info(device),
         "distributed": {"world_size": world_size, "rank": rank, "gpus": args.gpus},
-        "model": {"backbone": args.backbone, **count_parameters(model)},
+        "model": {
+            "backbone": args.backbone,
+            "implementation": "Custom" if args.custom else "Torchvision",
+            **count_parameters(model),
+        },
         "hyperparameters": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
@@ -752,6 +766,7 @@ def main() -> None:
             "weight_decay": args.weight_decay,
             "score_threshold": args.score_threshold,
             "backbone": args.backbone,
+            "custom_model": args.custom,
             "min_size": args.min_size,
             "max_size": args.max_size,
             "anchor_sizes": anchor_sizes,
@@ -825,6 +840,7 @@ def main() -> None:
     epochs_without_improvement = 0
     model_config = {
         "backbone": args.backbone,
+        "custom_model": args.custom,
         "min_size": args.min_size,
         "max_size": args.max_size,
         "anchor_sizes": anchor_sizes,

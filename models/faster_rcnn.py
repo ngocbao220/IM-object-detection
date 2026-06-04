@@ -9,6 +9,9 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torchvision.models import ResNet101_Weights, ResNet50_Weights, resnet101, resnet50
+from torchvision.models.detection.anchor_utils import AnchorGenerator as TorchvisionAnchorGenerator
+from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
+from torchvision.models.detection.faster_rcnn import FasterRCNN as TorchvisionFasterRCNN
 
 
 BACKBONE_WEIGHTS = {
@@ -199,7 +202,7 @@ class ResNetBackbone(nn.Module):
         return self.body(images)
 
 
-class AnchorGenerator(nn.Module):
+class CustomAnchorGenerator(nn.Module):
     def __init__(
         self,
         sizes: tuple[int, ...] = (64, 128, 192, 256, 512),
@@ -334,7 +337,7 @@ class CustomFasterRCNN(nn.Module):
         self.box_score_thresh = box_score_thresh
         self.box_nms_thresh = box_nms_thresh
         self.backbone = ResNetBackbone(backbone_name, pretrained_backbone, trainable_backbone_layers)
-        self.anchor_generator = AnchorGenerator(
+        self.anchor_generator = CustomAnchorGenerator(
             sizes=anchor_sizes or (64, 128, 192, 256, 512),
             ratios=anchor_ratios or (0.33, 0.5, 1.0, 2.0),
         )
@@ -606,10 +609,46 @@ def create_faster_rcnn(
     max_size: int = 768,
     anchor_sizes: tuple[int, ...] | None = None,
     anchor_ratios: tuple[float, ...] | None = None,
+    custom: bool = False,
     box_score_thresh: float = 0.05,
     box_nms_thresh: float = 0.5,
 ) -> torch.nn.Module:
-    """Create a from-scratch Faster R-CNN detector with optional ImageNet backbone weights."""
+    """Create Faster R-CNN.
+
+    By default this returns the torchvision Faster R-CNN implementation. Set
+    custom=True to use the detector implemented in this repository. In both
+    cases, pretrained_backbone controls only ImageNet backbone weights.
+    """
+    if not custom:
+        if backbone_name not in BACKBONE_WEIGHTS:
+            raise ValueError(f"Unsupported backbone: {backbone_name}. Choose one of {sorted(BACKBONE_WEIGHTS)}.")
+        weights_backbone = BACKBONE_WEIGHTS[backbone_name] if pretrained_backbone else None
+        effective_trainable_layers = trainable_backbone_layers if weights_backbone is not None else 5
+        backbone = resnet_fpn_backbone(
+            backbone_name=backbone_name,
+            weights=weights_backbone,
+            trainable_layers=effective_trainable_layers,
+        )
+        anchor_generator = None
+        if anchor_sizes is not None or anchor_ratios is not None:
+            sizes = anchor_sizes or (32, 64, 128, 256, 512)
+            ratios = anchor_ratios or (0.5, 1.0, 2.0)
+            if len(sizes) != 5:
+                raise ValueError("Torchvision FPN Faster R-CNN expects exactly 5 anchor sizes.")
+            anchor_generator = TorchvisionAnchorGenerator(
+                sizes=tuple((size,) for size in sizes),
+                aspect_ratios=tuple(tuple(ratios) for _ in sizes),
+            )
+        return TorchvisionFasterRCNN(
+            backbone=backbone,
+            num_classes=num_classes,
+            min_size=min_size,
+            max_size=max_size,
+            rpn_anchor_generator=anchor_generator,
+            box_score_thresh=box_score_thresh,
+            box_nms_thresh=box_nms_thresh,
+        )
+
     return CustomFasterRCNN(
         num_classes=num_classes,
         backbone_name=backbone_name,
@@ -630,15 +669,22 @@ def create_faster_rcnn_resnet101(num_classes: int, **kwargs: object) -> torch.nn
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Smoke test custom Faster R-CNN model.")
+    parser = argparse.ArgumentParser(description="Smoke test Faster R-CNN model factory.")
     parser.add_argument("--num_classes", type=int, default=6)
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
+    parser.add_argument("--custom", action="store_true")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    model = create_faster_rcnn(args.num_classes, backbone_name=args.backbone, min_size=128, max_size=192)
+    model = create_faster_rcnn(
+        args.num_classes,
+        backbone_name=args.backbone,
+        min_size=128,
+        max_size=192,
+        custom=args.custom,
+    )
     model.eval()
     images = [torch.rand(3, 128, 128)]
     with torch.no_grad():
