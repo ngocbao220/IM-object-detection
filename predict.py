@@ -31,8 +31,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
     parser.add_argument("--min_size", type=int, default=768)
     parser.add_argument("--max_size", type=int, default=1024)
+    parser.add_argument("--anchor_sizes", default="", help="Optional comma-separated anchor sizes.")
+    parser.add_argument("--anchor_ratios", default="", help="Optional comma-separated anchor aspect ratios.")
     parser.add_argument("--device", default=None)
     return parser.parse_args()
+
+
+def parse_optional_int_tuple(value: str) -> tuple[int, ...] | None:
+    if not value.strip():
+        return None
+    parsed = tuple(int(item.strip()) for item in value.split(",") if item.strip())
+    if any(item <= 0 for item in parsed):
+        raise ValueError("Anchor sizes must contain positive integers.")
+    return parsed
+
+
+def parse_optional_float_tuple(value: str) -> tuple[float, ...] | None:
+    if not value.strip():
+        return None
+    parsed = tuple(float(item.strip()) for item in value.split(",") if item.strip())
+    if any(item <= 0 for item in parsed):
+        raise ValueError("Anchor ratios must contain positive values.")
+    return parsed
 
 
 def list_images(path: str | Path) -> list[Path]:
@@ -109,6 +129,10 @@ def main() -> None:
     backbone = model_config.get("backbone", args.backbone)
     min_size = int(model_config.get("min_size", args.min_size))
     max_size = int(model_config.get("max_size", args.max_size))
+    anchor_sizes = model_config.get("anchor_sizes") or parse_optional_int_tuple(args.anchor_sizes)
+    anchor_ratios = model_config.get("anchor_ratios") or parse_optional_float_tuple(args.anchor_ratios)
+    anchor_sizes = tuple(anchor_sizes) if anchor_sizes else None
+    anchor_ratios = tuple(anchor_ratios) if anchor_ratios else None
 
     print_run_configuration(
         "Prediction Session",
@@ -122,9 +146,11 @@ def main() -> None:
             "device": device,
             "score_threshold": args.score_threshold,
             "nms_threshold": args.nms_threshold,
-            "model": f"Faster R-CNN {backbone} FPN",
+            "model": f"Custom Faster R-CNN {backbone}",
             "min_size": min_size,
             "max_size": max_size,
+            "anchor_sizes": anchor_sizes or "custom_default",
+            "anchor_ratios": anchor_ratios or "custom_default",
             "model_config_source": "checkpoint" if model_config else "CLI",
         },
     )
@@ -136,6 +162,8 @@ def main() -> None:
         box_nms_thresh=args.nms_threshold,
         min_size=min_size,
         max_size=max_size,
+        anchor_sizes=anchor_sizes,
+        anchor_ratios=anchor_ratios,
     ).to(device)
     if checkpoint_path.exists():
         checkpoint = load_checkpoint(checkpoint_path, model, device)

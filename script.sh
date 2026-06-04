@@ -45,6 +45,8 @@ NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
 BACKBONE="${BACKBONE:-resnet101}"
 MIN_SIZE="${MIN_SIZE:-768}"
 MAX_SIZE="${MAX_SIZE:-1024}"
+ANCHOR_SIZES="${ANCHOR_SIZES:-}"
+ANCHOR_RATIOS="${ANCHOR_RATIOS:-}"
 CONFIDENCE_THRESHOLDS="${CONFIDENCE_THRESHOLDS:-0.2,0.3,0.4,0.5,0.6,0.7}"
 NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
@@ -123,6 +125,14 @@ train() {
     train_args+=(--oversample_class "${OVERSAMPLE_CLASS}")
   fi
 
+  if [[ -n "${ANCHOR_SIZES}" ]]; then
+    train_args+=(--anchor_sizes "${ANCHOR_SIZES}")
+  fi
+
+  if [[ -n "${ANCHOR_RATIOS}" ]]; then
+    train_args+=(--anchor_ratios "${ANCHOR_RATIOS}")
+  fi
+
   if [[ "${USE_WANDB}" == "1" ]]; then
     train_args+=(--use_wandb)
   fi
@@ -149,15 +159,26 @@ train() {
 }
 
 predict() {
-  python predict.py \
-    --image_dir "${PREDICT_IMAGE_DIR}" \
-    --output "${PREDICTIONS_OUTPUT}" \
-    --checkpoint "${CHECKPOINT}" \
-    --score_threshold "${SCORE_THRESHOLD}" \
-    --nms_threshold "${NMS_THRESHOLD}" \
-    --backbone "${BACKBONE}" \
-    --min_size "${MIN_SIZE}" \
+  predict_args=(
+    --image_dir "${PREDICT_IMAGE_DIR}"
+    --output "${PREDICTIONS_OUTPUT}"
+    --checkpoint "${CHECKPOINT}"
+    --score_threshold "${SCORE_THRESHOLD}"
+    --nms_threshold "${NMS_THRESHOLD}"
+    --backbone "${BACKBONE}"
+    --min_size "${MIN_SIZE}"
     --max_size "${MAX_SIZE}"
+  )
+
+  if [[ -n "${ANCHOR_SIZES}" ]]; then
+    predict_args+=(--anchor_sizes "${ANCHOR_SIZES}")
+  fi
+
+  if [[ -n "${ANCHOR_RATIOS}" ]]; then
+    predict_args+=(--anchor_ratios "${ANCHOR_RATIOS}")
+  fi
+
+  python predict.py "${predict_args[@]}"
 }
 
 evaluate() {

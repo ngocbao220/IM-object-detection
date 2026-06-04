@@ -30,7 +30,7 @@ from utils.metric import evaluate_extended_metrics
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train Faster R-CNN with a ResNet FPN backbone.")
+    parser = argparse.ArgumentParser(description="Train a custom Faster R-CNN with a ResNet backbone.")
     parser.add_argument("--train_data", required=True)
     parser.add_argument("--val_data", required=True)
     parser.add_argument("--image_dir", required=True)
@@ -47,6 +47,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
     parser.add_argument("--min_size", type=int, default=768)
     parser.add_argument("--max_size", type=int, default=1024)
+    parser.add_argument(
+        "--anchor_sizes",
+        default="",
+        help="Optional comma-separated anchor sizes, e.g. 64,128,192,256,512.",
+    )
+    parser.add_argument(
+        "--anchor_ratios",
+        default="",
+        help="Optional comma-separated anchor aspect ratios, e.g. 0.33,0.5,1.0,2.0.",
+    )
     parser.add_argument(
         "--lr_milestones",
         default="15,25",
@@ -129,6 +139,24 @@ def parse_lr_milestones(value: str) -> list[int]:
     if any(epoch <= 0 for epoch in milestones):
         raise ValueError("--lr_milestones must contain positive epoch numbers.")
     return sorted(set(milestones))
+
+
+def parse_optional_int_tuple(value: str) -> tuple[int, ...] | None:
+    if not value.strip():
+        return None
+    parsed = tuple(int(item.strip()) for item in value.split(",") if item.strip())
+    if any(item <= 0 for item in parsed):
+        raise ValueError("Anchor sizes must contain positive integers.")
+    return parsed
+
+
+def parse_optional_float_tuple(value: str) -> tuple[float, ...] | None:
+    if not value.strip():
+        return None
+    parsed = tuple(float(item.strip()) for item in value.split(",") if item.strip())
+    if any(item <= 0 for item in parsed):
+        raise ValueError("Anchor ratios must contain positive values.")
+    return parsed
 
 
 def setup_device(args: argparse.Namespace) -> tuple[torch.device, int, int]:
@@ -471,7 +499,7 @@ def format_session_info(info: dict[str, Any]) -> str:
     else:
         lines.append("Oversampling: disabled")
     lines.append(
-        f"Model: Faster R-CNN {info['model']['backbone']} FPN "
+        f"Model: Custom Faster R-CNN {info['model']['backbone']} "
         f"({info['model']['trainable_parameters']:,}/"
         f"{info['model']['total_parameters']:,} trainable/total params)"
     )
@@ -485,6 +513,8 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"backbone={info['hyperparameters']['backbone']}, "
         f"min_size={info['hyperparameters']['min_size']}, "
         f"max_size={info['hyperparameters']['max_size']}, "
+        f"anchor_sizes={info['hyperparameters']['anchor_sizes'] or 'custom_default'}, "
+        f"anchor_ratios={info['hyperparameters']['anchor_ratios'] or 'custom_default'}, "
         f"score_threshold={info['hyperparameters']['score_threshold']}, "
         f"augmentation={info['hyperparameters']['augmentation']}, "
         f"early_stopping={info['hyperparameters']['early_stopping']}, "
@@ -513,6 +543,10 @@ def main() -> None:
     if args.min_size <= 0 or args.max_size <= 0 or args.min_size > args.max_size:
         raise ValueError("--min_size and --max_size must be positive with min_size <= max_size.")
     lr_milestones = parse_lr_milestones(args.lr_milestones)
+    anchor_sizes = parse_optional_int_tuple(args.anchor_sizes)
+    anchor_ratios = parse_optional_float_tuple(args.anchor_ratios)
+    if anchor_sizes is not None and not anchor_sizes:
+        raise ValueError("--anchor_sizes must contain at least one value.")
     probabilities = [
         args.horizontal_flip_probability,
         args.color_jitter_probability,
@@ -564,9 +598,11 @@ def main() -> None:
                 "early_stopping": args.early_stopping,
                 "early_stopping_patience": args.early_stopping_patience,
                 "score_threshold_for_validation": args.score_threshold,
-                "model": f"Faster R-CNN {args.backbone} FPN",
+                "model": f"Custom Faster R-CNN {args.backbone}",
                 "min_size": args.min_size,
                 "max_size": args.max_size,
+                "anchor_sizes": anchor_sizes or "custom_default",
+                "anchor_ratios": anchor_ratios or "custom_default",
             },
         )
     checkpoint_dir = saved_results_dir / "checkpoints"
@@ -619,6 +655,8 @@ def main() -> None:
         pretrained_backbone=args.pretrained_backbone,
         min_size=args.min_size,
         max_size=args.max_size,
+        anchor_sizes=anchor_sizes,
+        anchor_ratios=anchor_ratios,
     ).to(device)
     if world_size > 1:
         model = DistributedDataParallel(model, device_ids=[device.index])
@@ -662,6 +700,8 @@ def main() -> None:
             "backbone": args.backbone,
             "min_size": args.min_size,
             "max_size": args.max_size,
+            "anchor_sizes": anchor_sizes,
+            "anchor_ratios": anchor_ratios,
             "eval_max_images": args.eval_max_images,
             "log_interval": args.log_interval,
             "pretrained_backbone": args.pretrained_backbone,
@@ -715,6 +755,8 @@ def main() -> None:
         "backbone": args.backbone,
         "min_size": args.min_size,
         "max_size": args.max_size,
+        "anchor_sizes": anchor_sizes,
+        "anchor_ratios": anchor_ratios,
     }
 
     for epoch in range(1, args.epochs + 1):
