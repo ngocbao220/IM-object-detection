@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import os
 import platform
+import resource
 import subprocess
 import sys
 import tempfile
@@ -407,6 +409,55 @@ def append_session_log(path: Path, message: str, timestamp: bool = True) -> None
         f.write(prefix + message.rstrip() + "\n")
         f.flush()
         os.fsync(f.fileno())
+
+
+def read_process_memory_mb() -> dict[str, float | None]:
+    result: dict[str, float | None] = {"rss_mb": None, "peak_rss_mb": None}
+    status_path = Path("/proc/self/status")
+    if status_path.exists():
+        for line in status_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmRSS:"):
+                result["rss_mb"] = float(line.split()[1]) / 1024
+            elif line.startswith("VmHWM:"):
+                result["peak_rss_mb"] = float(line.split()[1]) / 1024
+        return result
+
+    max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KiB, macOS reports bytes.
+    divisor = 1024 if platform.system() != "Darwin" else 1024**2
+    result["peak_rss_mb"] = float(max_rss) / divisor
+    return result
+
+
+def format_resource_usage(device: torch.device) -> str:
+    process_memory = read_process_memory_mb()
+    parts = [
+        f"rss={process_memory['rss_mb']:.1f}MB" if process_memory["rss_mb"] is not None else "rss=unknown",
+        (
+            f"peak_rss={process_memory['peak_rss_mb']:.1f}MB"
+            if process_memory["peak_rss_mb"] is not None
+            else "peak_rss=unknown"
+        ),
+    ]
+    if device.type == "cuda" and torch.cuda.is_available():
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        free_bytes, total_bytes = torch.cuda.mem_get_info(index)
+        parts.extend(
+            [
+                f"cuda_alloc={torch.cuda.memory_allocated(index) / (1024**2):.1f}MB",
+                f"cuda_reserved={torch.cuda.memory_reserved(index) / (1024**2):.1f}MB",
+                f"cuda_peak_alloc={torch.cuda.max_memory_allocated(index) / (1024**2):.1f}MB",
+                f"cuda_free={free_bytes / (1024**2):.1f}MB",
+                f"cuda_total={total_bytes / (1024**2):.1f}MB",
+            ]
+        )
+    return "Resources: " + ", ".join(parts)
+
+
+def release_epoch_memory(device: torch.device) -> None:
+    gc.collect()
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def format_epoch_summary(
@@ -885,6 +936,9 @@ def main(args: argparse.Namespace | None = None) -> None:
         current_lr = optimizer.param_groups[0]["lr"]
         if is_main_process:
             append_session_log(text_log_path, f"Epoch [{epoch:02d}/{args.epochs:02d}] started.")
+            if device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats(device)
+            append_session_log(text_log_path, format_resource_usage(device))
         if isinstance(train_sampler, DistributedSampler):
             train_sampler.set_epoch(epoch)
         train_logs = train_one_epoch(
@@ -896,13 +950,17 @@ def main(args: argparse.Namespace | None = None) -> None:
             is_main_process,
             log_interval=args.log_interval,
             log_callback=(
-                lambda message: append_session_log(text_log_path, message)
+                lambda message: append_session_log(
+                    text_log_path,
+                    f"{message}. {format_resource_usage(device)}",
+                )
                 if is_main_process
                 else None
             ),
         )
 
         if is_main_process:
+            append_session_log(text_log_path, f"Epoch {epoch:02d} train resources. {format_resource_usage(device)}")
             append_session_log(text_log_path, f"Epoch {epoch:02d} training completed. Computing validation loss.")
             val_logs = compute_validation_loss(
                 unwrap_model(model),
@@ -913,7 +971,7 @@ def main(args: argparse.Namespace | None = None) -> None:
             append_session_log(
                 text_log_path,
                 f"Epoch {epoch:02d} validation loss completed: {val_logs.get('loss', 0.0):.4f}. "
-                "Computing detection metrics.",
+                f"{format_resource_usage(device)}. Computing detection metrics.",
             )
             val_predictions = predict_dataset(
                 unwrap_model(model),
@@ -925,7 +983,10 @@ def main(args: argparse.Namespace | None = None) -> None:
             )
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
             val_metrics = evaluate_extended_metrics(val_gt, val_predictions, val_dataset.classes)
-            append_session_log(text_log_path, f"Epoch {epoch:02d} metrics computed. Saving artifacts.")
+            append_session_log(
+                text_log_path,
+                f"Epoch {epoch:02d} metrics computed. {format_resource_usage(device)}. Saving artifacts.",
+            )
             epoch_seconds = time.perf_counter() - epoch_started
 
             row = {
@@ -1004,6 +1065,9 @@ def main(args: argparse.Namespace | None = None) -> None:
                     f"Early stopping triggered at epoch {epoch:02d}. "
                     f"Best mAP@0.5={best_map:.4f}.",
                 )
+            del val_predictions, val_gt, val_metrics, epoch_metrics, row
+            release_epoch_memory(device)
+            append_session_log(text_log_path, f"Epoch {epoch:02d} cleanup completed. {format_resource_usage(device)}")
         scheduler.step()
         if dist.is_initialized():
             stop_tensor = torch.tensor([int(should_stop)], device=device)
