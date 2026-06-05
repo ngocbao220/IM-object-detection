@@ -98,6 +98,12 @@ train() {
   if [[ "${RESUME_LAST}" == "1" && -z "${resume_checkpoint}" ]]; then
     resume_checkpoint="${RUN_RESULTS_DIR}/checkpoints/last_model.pth"
   fi
+  if [[ -n "${GPUS}" ]]; then
+    export CUDA_VISIBLE_DEVICES="${GPUS}"
+  elif [[ -n "${GPU}" ]]; then
+    export CUDA_VISIBLE_DEVICES="${GPU}"
+  fi
+  unset CUDA_VISIBLE_DEVICE
 
   train_args=(
     --train_data "${TRAIN_DATA}"

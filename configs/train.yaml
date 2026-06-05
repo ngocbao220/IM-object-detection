@@ -57,10 +57,7 @@ early_stopping:
 
 hydra:
   run:
-    dir: hydra_logs/${now:%Y%m%d-%H%M%S}
-  sweep:
-    dir: hydra_logs/multirun/${now:%Y%m%d-%H%M%S}
-    subdir: ${hydra.job.num}
-  output_subdir: .hydra
+    dir: .
+  output_subdir: null
   job:
     chdir: false

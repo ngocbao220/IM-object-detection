@@ -114,13 +114,8 @@ python train_hydra.py
 python predict_hydra.py
 ```
 
-Hydra logs and resolved configs are written under:
-
-```text
-hydra_logs/<YYYYMMDD-HHMMSS>/
-├── train_hydra.log
-└── .hydra/
-```
+Hydra is configured to keep the current working directory unchanged. Training
+logs/checkpoints still go to `saved_results/<run.name>/`.
 
 Override parameters from the command line:
 
@@ -154,10 +149,17 @@ python train_hydra.py \
 ```
 
 Multi-GPU Hydra training can be requested with `device.gpus`. If it contains
-more than one GPU id, DDP is launched automatically:
+more than one GPU id, DDP is launched automatically. The wrapper also sets the
+canonical CUDA environment variable `CUDA_VISIBLE_DEVICES` for each train run:
 
 ```bash
 python train_hydra.py \
   run.name=resnet101-ddp \
   device.gpus=0,1
+```
+
+The shell script does the same for regular training:
+
+```bash
+GPUS=0,1 WANDB_RUN_NAME=resnet101-ddp bash script.sh train
 ```

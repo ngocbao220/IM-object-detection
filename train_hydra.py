@@ -4,11 +4,11 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import hydra
-from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
 from train import main as train_main
@@ -29,15 +29,25 @@ def _gpu_ids(gpus: Any) -> list[str]:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
+def configure_cuda_visible_devices_from_hydra(cfg: DictConfig) -> None:
+    gpu_ids = _gpu_ids(cfg.device.get("gpus"))
+    if not gpu_ids:
+        gpu = _none_if_missing(cfg.device.get("gpu"))
+        if gpu is not None:
+            gpu_ids = [str(gpu)]
+    if gpu_ids:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(gpu_ids)
+        # Keep the common typo unset so CUDA/PyTorch uses the canonical plural env var.
+        os.environ.pop("CUDA_VISIBLE_DEVICE", None)
+
+
 def maybe_launch_distributed_from_hydra(cfg: DictConfig) -> None:
     gpu_ids = _gpu_ids(cfg.device.get("gpus"))
     already_distributed = bool(cfg.device.get("distributed", False))
     if len(gpu_ids) < 2 or already_distributed or os.environ.get("LOCAL_RANK") is not None:
         return
 
-    run_dir = Path(HydraConfig.get().runtime.output_dir)
-    config_dir = run_dir / ".hydra_resolved"
-    config_dir.mkdir(parents=True, exist_ok=True)
+    config_dir = Path(tempfile.mkdtemp(prefix="hydra_ddp_config_"))
     resolved_config = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
     resolved_config.device.distributed = True
     config_path = config_dir / "train.yaml"
@@ -121,6 +131,7 @@ def build_train_args(cfg: DictConfig) -> argparse.Namespace:
 
 @hydra.main(version_base=None, config_path="configs", config_name="train")
 def main(cfg: DictConfig) -> None:
+    configure_cuda_visible_devices_from_hydra(cfg)
     maybe_launch_distributed_from_hydra(cfg)
     train_main(build_train_args(cfg))
 
