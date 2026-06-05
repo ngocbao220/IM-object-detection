@@ -40,7 +40,6 @@ SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
 EVAL_SCORE_THRESHOLD="${EVAL_SCORE_THRESHOLD:-0.05}"
 NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
 BACKBONE="${BACKBONE:-resnet101}"
-CUSTOM_MODEL="${CUSTOM_MODEL:-1}"
 MIN_SIZE="${MIN_SIZE:-768}"
 MAX_SIZE="${MAX_SIZE:-1024}"
 ANCHOR_SIZES="${ANCHOR_SIZES:-}"
@@ -146,8 +145,6 @@ train() {
     train_args+=(--resume_from "${resume_checkpoint}")
   fi
 
-  train_args+=(--custom)
-
   if [[ -n "${ANCHOR_SIZES}" ]]; then
     train_args+=(--anchor_sizes "${ANCHOR_SIZES}")
   fi
@@ -216,8 +213,6 @@ predict() {
   if [[ -n "${ANCHOR_RATIOS}" ]]; then
     predict_args+=(--anchor_ratios "${ANCHOR_RATIOS}")
   fi
-
-  predict_args+=(--custom)
 
   python predict.py "${predict_args[@]}"
 }

@@ -29,12 +29,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--score_threshold", type=float, default=0.5)
     parser.add_argument("--nms_threshold", type=float, default=0.5)
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
-    parser.add_argument(
-        "--custom",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Use the repository's custom Faster R-CNN implementation. Required by the assignment.",
-    )
     parser.add_argument("--min_size", type=int, default=768)
     parser.add_argument("--max_size", type=int, default=1024)
     parser.add_argument("--anchor_sizes", default="", help="Optional comma-separated anchor sizes.")
@@ -133,19 +127,6 @@ def main(args: argparse.Namespace | None = None) -> None:
     )
     model_config = checkpoint_metadata.get("model_config", {})
     backbone = model_config.get("backbone", args.backbone)
-    custom_model = bool(model_config.get("custom_model", args.custom))
-    if not custom_model:
-        raise ValueError(
-            "This checkpoint/config requests a complete torchvision detector, "
-            "which is not allowed for this assignment. Use a custom-model checkpoint."
-        )
-    custom_model_version = model_config.get("custom_model_version")
-    if custom_model and model_config and custom_model_version != CUSTOM_MODEL_VERSION:
-        raise ValueError(
-            "Checkpoint uses an older custom model architecture. "
-            f"checkpoint_version={custom_model_version}, current_version={CUSTOM_MODEL_VERSION}. "
-            "Retrain the custom model or use a checkpoint saved after this architecture update."
-        )
     min_size = int(model_config.get("min_size", args.min_size))
     max_size = int(model_config.get("max_size", args.max_size))
     anchor_sizes = model_config.get("anchor_sizes") or parse_optional_int_tuple(args.anchor_sizes)
@@ -165,12 +146,11 @@ def main(args: argparse.Namespace | None = None) -> None:
             "device": device,
             "score_threshold": args.score_threshold,
             "nms_threshold": args.nms_threshold,
-            "model": f"{'Custom' if custom_model else 'Torchvision'} Faster R-CNN {backbone}",
-            "custom_model": custom_model,
+            "model": f"Custom Faster R-CNN {backbone}",
             "min_size": min_size,
             "max_size": max_size,
-            "anchor_sizes": anchor_sizes or "model_default",
-            "anchor_ratios": anchor_ratios or "model_default",
+            "anchor_sizes": anchor_sizes or "custom_default",
+            "anchor_ratios": anchor_ratios or "custom_default",
             "model_config_source": "checkpoint" if model_config else "CLI",
         },
     )
@@ -184,7 +164,6 @@ def main(args: argparse.Namespace | None = None) -> None:
         max_size=max_size,
         anchor_sizes=anchor_sizes,
         anchor_ratios=anchor_ratios,
-        custom=custom_model,
     ).to(device)
     if checkpoint_path.exists():
         checkpoint = load_checkpoint(checkpoint_path, model, device)

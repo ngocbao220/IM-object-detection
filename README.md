@@ -17,10 +17,14 @@ WANDB_RUN_NAME=baseline bash script.sh train
 USE_WANDB=1 WANDB_RUN_NAME=baseline GPU=0 bash script.sh train
 ```
 
-Training uses the custom Faster R-CNN-style implementation in
-`models/faster_rcnn.py` with a ResNet-101 backbone by default. Only the
-backbone can use ImageNet weights; detection heads are initialized from
-scratch. Use a new phase name when comparing with older ResNet-50 runs:
+The current model uses a custom Faster R-CNN detector with a ResNet-101
+backbone. RPN, anchors, proposals, ROI pooling, and detection heads are built in
+this repository; only the optional backbone weights come from ImageNet. Use a
+new phase name when comparing with older ResNet-50 runs:
+
+Checkpoints created by the previous `torchvision.models.detection` model are
+not compatible with this custom implementation; retrain a new run before
+predicting.
 
 ```bash
 USE_WANDB=1 WANDB_RUN_NAME=resnet101-baseline GPU=0 bash script.sh train
@@ -34,32 +38,6 @@ WANDB_RUN_NAME=resnet50-512x768 GPU=0 bash script.sh train
 
 BACKBONE=resnet101 MIN_SIZE=768 MAX_SIZE=1024 \
 WANDB_RUN_NAME=resnet101-768x1024 GPU=0 bash script.sh train
-```
-
-Learning-rate scheduling defaults to cosine decay instead of hard drops:
-
-```bash
-LR_SCHEDULER=cosine MIN_LR=0.00001 WANDB_RUN_NAME=resnet101-cosine GPU=0 bash script.sh train
-LR_SCHEDULER=plateau PLATEAU_PATIENCE=3 PLATEAU_FACTOR=0.5 WANDB_RUN_NAME=resnet101-plateau GPU=0 bash script.sh train
-LR_SCHEDULER=multistep LR_MILESTONES=15,25 LR_GAMMA=0.1 WANDB_RUN_NAME=resnet101-multistep GPU=0 bash script.sh train
-```
-
-For DDP, `BATCH_SIZE` is per GPU. Aspect-ratio grouping is enabled by default
-to reduce per-rank padding imbalance:
-
-```bash
-GPUS=0,1 BATCH_SIZE=8 NUM_WORKERS=4 ASPECT_RATIO_GROUPING=1 WANDB_RUN_NAME=resnet101-ddp bash script.sh train
-```
-
-The assignment forbids complete detector implementations from torchvision,
-Detectron2, MMDetection, YOLO, SSD, etc. This project therefore always uses the
-custom Faster R-CNN-style detector in `models/faster_rcnn.py`; torchvision is
-used only for ImageNet-pretrained ResNet backbone weights and primitive ops
-such as `torchvision.ops.roi_align` / `torchvision.ops.nms`.
-
-```bash
-BACKBONE=resnet101 MIN_SIZE=512 MAX_SIZE=768 \
-WANDB_RUN_NAME=resnet101-512x768-custom GPU=0 bash script.sh train
 ```
 
 To focus training on a weak class such as `chair`, enable image-level
