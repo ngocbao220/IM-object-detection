@@ -606,47 +606,6 @@ def main(args: argparse.Namespace | None = None) -> None:
         raise ValueError("--wandb_run_name must be a single folder-safe name.")
     saved_results_root = Path(args.checkpoint_dir or args.saved_results_dir)
     saved_results_dir = saved_results_root / run_name
-    if is_main_process:
-        print_run_configuration(
-            "Training Configuration",
-            {
-                "run_name": run_name,
-                "train_data": Path(args.train_data),
-                "val_data": Path(args.val_data),
-                "train_image_dir": Path(args.image_dir),
-                "val_image_dir": Path(args.val_image_dir),
-                "saved_results_root": saved_results_root,
-                "run_results_dir": saved_results_dir,
-                "resume_from": args.resume_from or "disabled",
-                "device": device,
-                "world_size": world_size,
-                "gpus": args.gpus or args.gpu or "auto",
-                "epochs": args.epochs,
-                "batch_size": args.batch_size,
-                "num_workers": args.num_workers,
-                "lr": args.lr,
-                "lr_milestones": lr_milestones,
-                "lr_gamma": args.lr_gamma,
-                "momentum": args.momentum,
-                "weight_decay": args.weight_decay,
-                "pretrained_backbone": args.pretrained_backbone,
-                "augmentation": args.augmentation,
-                "horizontal_flip_probability": args.horizontal_flip_probability,
-                "color_jitter_probability": args.color_jitter_probability,
-                "grayscale_probability": args.grayscale_probability,
-                "oversample_class": args.oversample_class or "disabled",
-                "oversample_factor": args.oversample_factor,
-                "early_stopping": args.early_stopping,
-                "early_stopping_patience": args.early_stopping_patience,
-                "score_threshold_for_validation": args.score_threshold,
-                "model": f"{'Custom' if args.custom else 'Torchvision'} Faster R-CNN {args.backbone}",
-                "custom_model": args.custom,
-                "min_size": args.min_size,
-                "max_size": args.max_size,
-                "anchor_sizes": anchor_sizes or "model_default",
-                "anchor_ratios": anchor_ratios or "model_default",
-            },
-        )
     checkpoint_dir = saved_results_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log_dir = saved_results_dir / "logs"
