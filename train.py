@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import math
 import os
 import platform
 import resource
@@ -16,7 +17,7 @@ from typing import Any, Callable
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader, Sampler, WeightedRandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm.auto import tqdm
 
@@ -112,6 +113,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--eval_max_images", type=int, default=0)
     parser.add_argument("--log_interval", type=int, default=20, help="Append progress to session log every N batches.")
+    parser.add_argument(
+        "--aspect_ratio_grouping",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Group similarly-shaped images in DDP batches to reduce rank stragglers.",
+    )
     parser.add_argument(
         "--augmentation",
         action=argparse.BooleanOptionalAction,
@@ -313,6 +320,77 @@ def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     return model.module if isinstance(model, DistributedDataParallel) else model
 
 
+class AspectRatioDistributedSampler(Sampler[int]):
+    """DDP sampler that forms similarly-shaped per-rank batches.
+
+    Faster R-CNN pads each batch to the largest image in that batch. With DDP,
+    all ranks synchronize gradients every step, so one rank receiving a large
+    padded batch makes every other rank wait. This sampler sorts images by
+    aspect ratio, creates global groups of batch_size * world_size images, and
+    gives each rank one batch from the same group.
+    """
+
+    def __init__(
+        self,
+        dataset: OdDataset,
+        batch_size: int,
+        num_replicas: int,
+        rank: int,
+        shuffle: bool = True,
+        seed: int = 0,
+    ) -> None:
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.shuffle = shuffle
+        self.seed = seed
+        self.epoch = 0
+        self.group_size = batch_size * num_replicas
+        self.num_groups = math.ceil(len(dataset) / self.group_size)
+        self.num_samples = self.num_groups * batch_size
+        self.total_size = self.num_groups * self.group_size
+        self.sorted_indices = sorted(
+            range(len(dataset)),
+            key=lambda index: (
+                float(dataset.images[index].get("width", 1))
+                / max(float(dataset.images[index].get("height", 1)), 1.0)
+            ),
+        )
+
+    def __iter__(self) -> Any:
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + self.epoch)
+        indices = list(self.sorted_indices)
+        if len(indices) < self.total_size:
+            repeat = math.ceil((self.total_size - len(indices)) / len(indices))
+            indices += (indices * repeat)[: self.total_size - len(indices)]
+
+        groups = [
+            indices[start : start + self.group_size]
+            for start in range(0, self.total_size, self.group_size)
+        ]
+        if self.shuffle:
+            order = torch.randperm(len(groups), generator=generator).tolist()
+            groups = [groups[index] for index in order]
+            for group in groups:
+                permutation = torch.randperm(len(group), generator=generator).tolist()
+                group[:] = [group[index] for index in permutation]
+
+        rank_indices = []
+        start = self.rank * self.batch_size
+        end = start + self.batch_size
+        for group in groups:
+            rank_indices.extend(group[start:end])
+        return iter(rank_indices)
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     loader: DataLoader,
@@ -365,6 +443,7 @@ def compute_validation_loss(
     loader: DataLoader,
     device: torch.device,
     max_images: int = 0,
+    is_main_process: bool = True,
 ) -> dict[str, float]:
     """Compute Faster R-CNN validation losses without optimizer updates."""
     model.train()
@@ -372,7 +451,7 @@ def compute_validation_loss(
     num_batches = 0
     num_images = 0
 
-    progress = tqdm(loader, desc="val loss", leave=False)
+    progress = tqdm(loader, desc="val loss", leave=False, disable=not is_main_process)
     for images, targets in progress:
         images = [image.to(device) for image in images]
         targets = move_targets_to_device(list(targets), device)
@@ -391,6 +470,12 @@ def compute_validation_loss(
             break
 
     model.eval()
+    if dist.is_initialized():
+        keys = sorted(totals)
+        values = torch.tensor([totals[key] for key in keys] + [num_batches], device=device)
+        dist.all_reduce(values, op=dist.ReduceOp.SUM)
+        total_batches = max(float(values[-1]), 1.0)
+        return {key: float(values[index]) / total_batches for index, key in enumerate(keys)}
     return {key: value / max(num_batches, 1) for key, value in totals.items()}
 
 
@@ -402,17 +487,19 @@ def predict_dataset(
     device: torch.device,
     score_threshold: float,
     max_images: int = 0,
+    is_main_process: bool = True,
 ) -> dict[str, list[dict[str, Any]]]:
     model.eval()
     predictions: dict[str, list[dict[str, Any]]] = {}
-    image_offset = 0
 
-    progress = tqdm(loader, desc="validate", leave=False)
-    for images, _targets in progress:
+    progress = tqdm(loader, desc="validate", leave=False, disable=not is_main_process)
+    processed_images = 0
+    for images, targets in progress:
         images_on_device = [image.to(device) for image in images]
         outputs = model(images_on_device)
-        for output in outputs:
-            image_info = dataset.images[image_offset]
+        for output, target in zip(outputs, targets):
+            image_index = int(target["image_id"].item())
+            image_info = dataset.images[image_index]
             image_id = image_info["id"]
             image_predictions = []
             for box, label, score in zip(output["boxes"], output["labels"], output["scores"]):
@@ -428,10 +515,21 @@ def predict_dataset(
                     }
                 )
             predictions[image_id] = image_predictions
-            image_offset += 1
-            if max_images and image_offset >= max_images:
+            processed_images += 1
+            if max_images and processed_images >= max_images:
                 return predictions
     return predictions
+
+
+def gather_prediction_dicts(local_predictions: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
+    if not dist.is_initialized():
+        return local_predictions
+    gathered: list[dict[str, list[dict[str, Any]]]] = [None for _ in range(dist.get_world_size())]  # type: ignore[list-item]
+    dist.all_gather_object(gathered, local_predictions)
+    merged: dict[str, list[dict[str, Any]]] = {}
+    for predictions in gathered:
+        merged.update(predictions)
+    return merged
 
 
 def ground_truth_from_dataset(dataset: OdDataset, max_images: int = 0) -> dict[str, list[dict[str, Any]]]:
@@ -719,6 +817,7 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"early_stopping={info['hyperparameters']['early_stopping']}, "
         f"early_stopping_patience={info['hyperparameters']['early_stopping_patience']}, "
         f"early_stopping_min_delta={info['hyperparameters']['early_stopping_min_delta']}, "
+        f"aspect_ratio_grouping={info['hyperparameters']['aspect_ratio_grouping']}, "
         f"num_workers={info['hyperparameters']['num_workers']}, "
         f"log_interval={info['hyperparameters']['log_interval']}"
     )
@@ -801,11 +900,19 @@ def main(args: argparse.Namespace | None = None) -> None:
     )
     if world_size > 1 and oversampling_sampler is not None:
         raise RuntimeError("--oversample_class is currently supported only for single-GPU training.")
-    train_sampler = (
-        DistributedSampler(train_dataset, shuffle=True)
-        if world_size > 1
-        else oversampling_sampler
-    )
+    if world_size > 1 and args.aspect_ratio_grouping:
+        train_sampler = AspectRatioDistributedSampler(
+            train_dataset,
+            batch_size=args.batch_size,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=True,
+        )
+    elif world_size > 1:
+        train_sampler = DistributedSampler(train_dataset, shuffle=True)
+    else:
+        train_sampler = oversampling_sampler
+    val_sampler = DistributedSampler(val_dataset, shuffle=False) if world_size > 1 else None
     train_loader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -818,6 +925,7 @@ def main(args: argparse.Namespace | None = None) -> None:
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
+        sampler=val_sampler,
         num_workers=args.num_workers,
         collate_fn=collate_fn,
     )
@@ -843,7 +951,12 @@ def main(args: argparse.Namespace | None = None) -> None:
         custom=args.custom,
     ).to(device)
     if world_size > 1:
-        model = DistributedDataParallel(model, device_ids=[device.index])
+        model = DistributedDataParallel(
+            model,
+            device_ids=[device.index],
+            broadcast_buffers=False,
+            gradient_as_bucket_view=True,
+        )
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
@@ -917,6 +1030,7 @@ def main(args: argparse.Namespace | None = None) -> None:
             "anchor_ratios": anchor_ratios,
             "eval_max_images": args.eval_max_images,
             "log_interval": args.log_interval,
+            "aspect_ratio_grouping": args.aspect_ratio_grouping,
             "pretrained_backbone": args.pretrained_backbone,
             "augmentation": args.augmentation,
             "horizontal_flip_probability": args.horizontal_flip_probability,
@@ -996,7 +1110,7 @@ def main(args: argparse.Namespace | None = None) -> None:
             if device.type == "cuda" and torch.cuda.is_available():
                 torch.cuda.reset_peak_memory_stats(device)
             append_session_log(text_log_path, format_resource_usage(device))
-        if isinstance(train_sampler, DistributedSampler):
+        if hasattr(train_sampler, "set_epoch"):
             train_sampler.set_epoch(epoch)
         train_logs = train_one_epoch(
             model,
@@ -1018,26 +1132,35 @@ def main(args: argparse.Namespace | None = None) -> None:
 
         if is_main_process:
             append_session_log(text_log_path, f"Epoch {epoch:02d} train resources. {format_resource_usage(device)}")
-            append_session_log(text_log_path, f"Epoch {epoch:02d} training completed. Computing validation loss.")
-            val_logs = compute_validation_loss(
-                unwrap_model(model),
-                val_loader,
-                device,
-                max_images=args.eval_max_images,
+            append_session_log(
+                text_log_path,
+                f"Epoch {epoch:02d} training completed. Computing distributed validation loss.",
             )
+        val_logs = compute_validation_loss(
+            unwrap_model(model),
+            val_loader,
+            device,
+            max_images=args.eval_max_images,
+            is_main_process=is_main_process,
+        )
+        if is_main_process:
             append_session_log(
                 text_log_path,
                 f"Epoch {epoch:02d} validation loss completed: {val_logs.get('loss', 0.0):.4f}. "
-                f"{format_resource_usage(device)}. Computing detection metrics.",
+                f"{format_resource_usage(device)}. Computing distributed predictions.",
             )
-            val_predictions = predict_dataset(
-                unwrap_model(model),
-                val_dataset,
-                val_loader,
-                device,
-                score_threshold=args.eval_score_threshold,
-                max_images=args.eval_max_images,
-            )
+        local_val_predictions = predict_dataset(
+            unwrap_model(model),
+            val_dataset,
+            val_loader,
+            device,
+            score_threshold=args.eval_score_threshold,
+            max_images=args.eval_max_images,
+            is_main_process=is_main_process,
+        )
+        val_predictions = gather_prediction_dicts(local_val_predictions)
+
+        if is_main_process:
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
             val_metrics = evaluate_extended_metrics(val_gt, val_predictions, val_dataset.classes)
             append_session_log(
@@ -1126,6 +1249,10 @@ def main(args: argparse.Namespace | None = None) -> None:
             del val_predictions, val_gt, val_metrics, epoch_metrics, row
             release_epoch_memory(device)
             append_session_log(text_log_path, f"Epoch {epoch:02d} cleanup completed. {format_resource_usage(device)}")
+        else:
+            del val_predictions
+            release_epoch_memory(device)
+        del local_val_predictions
         if dist.is_initialized():
             metric_tensor = torch.tensor([scheduler_metric], device=device)
             dist.broadcast(metric_tensor, src=0)

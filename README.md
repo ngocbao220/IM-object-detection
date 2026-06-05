@@ -44,6 +44,13 @@ LR_SCHEDULER=plateau PLATEAU_PATIENCE=3 PLATEAU_FACTOR=0.5 WANDB_RUN_NAME=resnet
 LR_SCHEDULER=multistep LR_MILESTONES=15,25 LR_GAMMA=0.1 WANDB_RUN_NAME=resnet101-multistep GPU=0 bash script.sh train
 ```
 
+For DDP, `BATCH_SIZE` is per GPU. Aspect-ratio grouping is enabled by default
+to reduce per-rank padding imbalance:
+
+```bash
+GPUS=0,1 BATCH_SIZE=8 NUM_WORKERS=4 ASPECT_RATIO_GROUPING=1 WANDB_RUN_NAME=resnet101-ddp bash script.sh train
+```
+
 The assignment forbids complete detector implementations from torchvision,
 Detectron2, MMDetection, YOLO, SSD, etc. This project therefore always uses the
 custom Faster R-CNN-style detector in `models/faster_rcnn.py`; torchvision is

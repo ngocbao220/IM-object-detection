@@ -13,6 +13,7 @@ run:
   wandb_project: object-detection-final
   eval_max_images: 0
   log_interval: 999999 # no logging
+  aspect_ratio_grouping: true
 
 model:
   backbone: resnet50

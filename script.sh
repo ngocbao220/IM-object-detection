@@ -26,6 +26,8 @@ EPOCHS="${EPOCHS:-30}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
 LOG_INTERVAL="${LOG_INTERVAL:-20}"
+EVAL_MAX_IMAGES="${EVAL_MAX_IMAGES:-0}"
+ASPECT_RATIO_GROUPING="${ASPECT_RATIO_GROUPING:-1}"
 LR="${LR:-0.001}"
 LR_SCHEDULER="${LR_SCHEDULER:-cosine}"
 LR_MILESTONES="${LR_MILESTONES:-15,25}"
@@ -106,6 +108,7 @@ train() {
     --batch_size "${BATCH_SIZE}"
     --num_workers "${NUM_WORKERS}"
     --log_interval "${LOG_INTERVAL}"
+    --eval_max_images "${EVAL_MAX_IMAGES}"
     --lr "${LR}"
     --lr_scheduler "${LR_SCHEDULER}"
     --lr_milestones "${LR_MILESTONES}"
@@ -164,6 +167,12 @@ train() {
     train_args+=(--augmentation)
   else
     train_args+=(--no-augmentation)
+  fi
+
+  if [[ "${ASPECT_RATIO_GROUPING}" == "1" ]]; then
+    train_args+=(--aspect_ratio_grouping)
+  else
+    train_args+=(--no-aspect_ratio_grouping)
   fi
 
   if [[ "${EARLY_STOPPING}" == "1" ]]; then

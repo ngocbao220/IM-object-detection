@@ -134,6 +134,7 @@ def build_train_args(cfg: DictConfig) -> argparse.Namespace:
         use_wandb=bool(run["use_wandb"]),
         eval_max_images=int(run["eval_max_images"]),
         log_interval=int(run["log_interval"]),
+        aspect_ratio_grouping=bool(run.get("aspect_ratio_grouping", True)),
         augmentation=bool(augmentation["enabled"]),
         horizontal_flip_probability=float(augmentation["horizontal_flip_probability"]),
         color_jitter_probability=float(augmentation["color_jitter_probability"]),
