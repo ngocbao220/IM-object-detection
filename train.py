@@ -5,6 +5,7 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -804,14 +805,18 @@ def main(args: argparse.Namespace | None = None) -> None:
         append_session_log(text_log_path, "Training session initialized.")
 
     run = None
+    wandb_tmpdir = None
     if args.use_wandb and is_main_process:
         if wandb is None:
             print("wandb is not installed; continuing without wandb.")
         else:
+            wandb_tmpdir = tempfile.TemporaryDirectory(prefix=f"wandb-{run_name}-")
             run = wandb.init(
                 project=args.wandb_project,
                 name=run_name,
                 config=vars(args) | session_info,
+                dir=wandb_tmpdir.name,
+                save_code=False,
             )
 
     last_checkpoint_path = checkpoint_dir / f"last_model-{started}.pth"
@@ -983,6 +988,8 @@ def main(args: argparse.Namespace | None = None) -> None:
 
     if run is not None:
         run.finish()
+    if wandb_tmpdir is not None:
+        wandb_tmpdir.cleanup()
     if is_main_process:
         append_session_log(text_log_path, "Training session completed.")
     if dist.is_initialized():
