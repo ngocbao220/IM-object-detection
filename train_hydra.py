@@ -27,23 +27,25 @@ def _gpu_ids(gpus: Any) -> list[str]:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
-def _configured_gpu_ids(cfg: DictConfig) -> list[str]:
+def _configured_gpu_ids(cfg: DictConfig) -> tuple[list[str], str]:
     gpu_ids = _gpu_ids(cfg.device.get("gpus"))
     if gpu_ids:
-        return gpu_ids
+        return gpu_ids, "gpus"
+
+    gpu = _none_if_missing(cfg.device.get("gpu"))
+    if gpu is not None:
+        return [str(gpu)], "gpu"
 
     visible_devices = _gpu_ids(os.environ.get("CUDA_VISIBLE_DEVICES"))
     if visible_devices:
-        return visible_devices
-
-    gpu = _none_if_missing(cfg.device.get("gpu"))
-    return [str(gpu)] if gpu is not None else []
+        return visible_devices, "env"
+    return [], "none"
 
 
 def configure_cuda_visible_devices_from_hydra(cfg: DictConfig) -> None:
     if os.environ.get("LOCAL_RANK") is not None:
         return
-    gpu_ids = _configured_gpu_ids(cfg)
+    gpu_ids, _source = _configured_gpu_ids(cfg)
     if gpu_ids:
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(gpu_ids)
         # Keep the common typo unset so CUDA/PyTorch uses the canonical plural env var.
@@ -51,9 +53,9 @@ def configure_cuda_visible_devices_from_hydra(cfg: DictConfig) -> None:
 
 
 def maybe_launch_distributed_from_hydra(cfg: DictConfig) -> None:
-    gpu_ids = _configured_gpu_ids(cfg)
+    gpu_ids, source = _configured_gpu_ids(cfg)
     already_distributed = bool(cfg.device.get("distributed", False))
-    if len(gpu_ids) < 2 or already_distributed or os.environ.get("LOCAL_RANK") is not None:
+    if source == "gpu" or len(gpu_ids) < 2 or already_distributed or os.environ.get("LOCAL_RANK") is not None:
         return
 
     config_dir = Path(tempfile.mkdtemp(prefix="hydra_ddp_config_"))
@@ -95,6 +97,8 @@ def build_train_args(cfg: DictConfig) -> argparse.Namespace:
     augmentation = data["augmentation"]
     oversampling = data["oversampling"]
     early_stopping = data["early_stopping"]
+    gpu_ids, gpu_source = _configured_gpu_ids(cfg)
+    single_visible_gpu = gpu_source in {"gpu", "env"} and len(gpu_ids) == 1
 
     return argparse.Namespace(
         train_data=paths["train_data"],
@@ -120,8 +124,8 @@ def build_train_args(cfg: DictConfig) -> argparse.Namespace:
         lr_milestones=str(optim["lr_milestones"]),
         lr_gamma=float(optim["lr_gamma"]),
         device=_none_if_missing(device.get("device")),
-        gpu=None if (os.environ.get("LOCAL_RANK") is not None or _gpu_ids(device.get("gpus"))) else device.get("gpu"),
-        gpus=_none_if_missing(device.get("gpus")),
+        gpu=0 if single_visible_gpu else None,
+        gpus=_none_if_missing(device.get("gpus")) if gpu_source == "gpus" else None,
         distributed=bool(device.get("distributed", False)) or os.environ.get("LOCAL_RANK") is not None,
         pretrained_backbone=bool(model["pretrained_backbone"]),
         wandb_project=run["wandb_project"],

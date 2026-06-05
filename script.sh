@@ -134,7 +134,7 @@ train() {
   if [[ -n "${GPUS}" ]]; then
     train_args+=(--gpus "${GPUS}")
   elif [[ -n "${GPU}" ]]; then
-    train_args+=(--gpu "${GPU}")
+    train_args+=(--gpu 0)
   fi
 
   if [[ -n "${OVERSAMPLE_CLASS}" ]]; then
