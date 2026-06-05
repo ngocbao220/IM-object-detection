@@ -111,6 +111,7 @@ def build_train_args(cfg: DictConfig) -> argparse.Namespace:
         momentum=float(optim["momentum"]),
         weight_decay=float(optim["weight_decay"]),
         score_threshold=float(model["score_threshold"]),
+        eval_score_threshold=float(model.get("eval_score_threshold", 0.05)),
         backbone=model["backbone"],
         custom=bool(model["custom"]),
         min_size=int(model["min_size"]),

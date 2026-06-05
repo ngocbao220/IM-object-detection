@@ -9,9 +9,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torchvision.models import ResNet101_Weights, ResNet50_Weights, resnet101, resnet50
-from torchvision.models.detection.anchor_utils import AnchorGenerator as TorchvisionAnchorGenerator
-from torchvision.models.detection.backbone_utils import resnet_fpn_backbone
-from torchvision.models.detection.faster_rcnn import FasterRCNN as TorchvisionFasterRCNN
+from torchvision.ops import nms as torchvision_nms
+from torchvision.ops import roi_align
 
 
 BACKBONE_WEIGHTS = {
@@ -29,15 +28,27 @@ BACKBONE_OUT_CHANNELS = {
     "resnet101": 1024,
 }
 
+CUSTOM_MODEL_VERSION = 3
+
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 
 def box_area(boxes: torch.Tensor) -> torch.Tensor:
+    """Compute area for each box tensor of shape (N, 4).
+
+    Boxes are in [x1, y1, x2, y2] format. Returns a tensor of length N
+    containing non-negative areas (clamped at zero).
+    """
     return (boxes[:, 2] - boxes[:, 0]).clamp(min=0) * (boxes[:, 3] - boxes[:, 1]).clamp(min=0)
 
 
 def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
+    """Compute pairwise IoU between two sets of boxes.
+
+    Returns an (N, M) tensor with IoU values between boxes1 and boxes2.
+    Handles empty inputs by returning an appropriately-shaped zero tensor.
+    """
     if boxes1.numel() == 0 or boxes2.numel() == 0:
         return boxes1.new_zeros((boxes1.shape[0], boxes2.shape[0]))
     lt = torch.maximum(boxes1[:, None, :2], boxes2[:, :2])
@@ -49,6 +60,11 @@ def box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
 
 
 def clip_boxes_to_image(boxes: torch.Tensor, size: tuple[int, int]) -> torch.Tensor:
+    """Clip box coordinates so they lie inside the image bounds.
+
+    `size` is (height, width). Coordinates are clamped in-place on a copy
+    and returned.
+    """
     height, width = size
     boxes = boxes.clone()
     boxes[:, 0::2] = boxes[:, 0::2].clamp(min=0, max=width)
@@ -57,27 +73,22 @@ def clip_boxes_to_image(boxes: torch.Tensor, size: tuple[int, int]) -> torch.Ten
 
 
 def remove_small_boxes(boxes: torch.Tensor, min_size: float) -> torch.Tensor:
+    """Return indices of boxes with both width and height >= `min_size`.
+
+    Useful to filter out degenerate proposals before NMS.
+    """
     widths = boxes[:, 2] - boxes[:, 0]
     heights = boxes[:, 3] - boxes[:, 1]
     return torch.where((widths >= min_size) & (heights >= min_size))[0]
 
 
-def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torch.Tensor:
-    if boxes.numel() == 0:
-        return boxes.new_empty((0,), dtype=torch.long)
-    order = scores.argsort(descending=True)
-    keep = []
-    while order.numel() > 0:
-        current = order[0]
-        keep.append(current)
-        if order.numel() == 1:
-            break
-        ious = box_iou(boxes[current].unsqueeze(0), boxes[order[1:]]).squeeze(0)
-        order = order[1:][ious <= iou_threshold]
-    return torch.stack(keep) if keep else boxes.new_empty((0,), dtype=torch.long)
-
-
 def encode_boxes(reference_boxes: torch.Tensor, proposals: torch.Tensor) -> torch.Tensor:
+    """Encode ground-truth boxes (`reference_boxes`) relative to proposal boxes.
+
+    This produces the 4-delta parameterization used for box regression
+    (tx, ty, tw, th) where translations are normalized by proposal sizes and
+    scales are log-ratios.
+    """
     widths = (proposals[:, 2] - proposals[:, 0]).clamp(min=1e-6)
     heights = (proposals[:, 3] - proposals[:, 1]).clamp(min=1e-6)
     ctr_x = proposals[:, 0] + 0.5 * widths
@@ -100,6 +111,11 @@ def encode_boxes(reference_boxes: torch.Tensor, proposals: torch.Tensor) -> torc
 
 
 def decode_boxes(deltas: torch.Tensor, boxes: torch.Tensor) -> torch.Tensor:
+    """Decode box regression deltas back into [x1,y1,x2,y2] coordinates.
+
+    Applies inverse of the encoding formula, with clamping on deltas to
+    avoid extreme outputs, and converts center/size back to corner format.
+    """
     widths = (boxes[:, 2] - boxes[:, 0]).clamp(min=1e-6)
     heights = (boxes[:, 3] - boxes[:, 1]).clamp(min=1e-6)
     ctr_x = boxes[:, 0] + 0.5 * widths
@@ -131,6 +147,12 @@ def resize_image_and_boxes(
     min_size: int,
     max_size: int,
 ) -> tuple[torch.Tensor, torch.Tensor | None, float]:
+    """Rescale image and associated boxes keeping aspect ratio.
+
+    Scales the shorter side to `min_size` unless that would make the longer
+    side exceed `max_size`, in which case the scale is reduced. Returns the
+    resized image tensor, resized boxes (or None), and the applied scale.
+    """
     _, height, width = image.shape
     short_side = min(height, width)
     long_side = max(height, width)
@@ -151,6 +173,12 @@ def resize_image_and_boxes(
 
 
 def pad_images(images: list[torch.Tensor], size_divisible: int = 16) -> tuple[torch.Tensor, list[tuple[int, int]]]:
+    """Pad a list of image tensors into a single batch tensor.
+
+    Pads images up to the maximum height/width (rounded to `size_divisible`) so
+    they can be stacked into a tensor of shape (N, 3, H, W). Returns the
+    batch and the list of original image sizes.
+    """
     image_sizes = [(image.shape[-2], image.shape[-1]) for image in images]
     max_height = max(size[0] for size in image_sizes)
     max_width = max(size[1] for size in image_sizes)
@@ -164,13 +192,18 @@ def pad_images(images: list[torch.Tensor], size_divisible: int = 16) -> tuple[to
 
 
 class ResNetBackbone(nn.Module):
-    """ImageNet-pretrained ResNet feature extractor; detection heads are custom."""
+    """ImageNet-pretrained ResNet feature extractor.
+
+    Exposes a feature `body` that returns convolutional feature maps used by the
+    RPN and ROI heads. Optionally freezes earlier layers when `pretrained_backbone`
+    is True to control how many layers are trainable.
+    """
 
     def __init__(
         self,
         backbone_name: str = "resnet101",
         pretrained_backbone: bool = False,
-        trainable_backbone_layers: int = 3,
+        trainable_backbone_layers: int = 2,
     ) -> None:
         super().__init__()
         if backbone_name not in BACKBONE_FACTORIES:
@@ -192,8 +225,17 @@ class ResNetBackbone(nn.Module):
         )
         self.out_channels = BACKBONE_OUT_CHANNELS[backbone_name]
         if pretrained_backbone:
+            # Freeze stem
+            for parameter in backbone.conv1.parameters():
+                parameter.requires_grad_(False)
+
+            for parameter in backbone.bn1.parameters():
+                parameter.requires_grad_(False)
+
+            # Freeze some residual layers
             layers = [backbone.layer1, backbone.layer2, backbone.layer3]
             frozen_layers = layers[: max(0, len(layers) - trainable_backbone_layers)]
+
             for layer in frozen_layers:
                 for parameter in layer.parameters():
                     parameter.requires_grad_(False)
@@ -222,6 +264,7 @@ class CustomAnchorGenerator(nn.Module):
 
     @property
     def num_anchors(self) -> int:
+        """Number of base anchors generated per feature location."""
         return int(self.base_anchors.shape[0])
 
     def forward(
@@ -229,6 +272,11 @@ class CustomAnchorGenerator(nn.Module):
         feature: torch.Tensor,
         image_size: tuple[int, int],
     ) -> torch.Tensor:
+        """Generate anchors for a feature map given the original image size.
+
+        Returns a tensor of shape (num_anchors_total, 4) in [x1,y1,x2,y2] format
+        mapped to the image coordinates.
+        """
         _, _, feature_height, feature_width = feature.shape
         image_height, image_width = image_size
         stride_y = image_height / feature_height
@@ -249,11 +297,13 @@ class RPNHead(nn.Module):
         self.conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
         self.objectness = nn.Conv2d(in_channels, num_anchors, kernel_size=1)
         self.bbox_reg = nn.Conv2d(in_channels, num_anchors * 4, kernel_size=1)
+        # Initialize conv layers for the RPN head with small random weights.
         for layer in [self.conv, self.objectness, self.bbox_reg]:
             nn.init.normal_(layer.weight, std=0.01)
             nn.init.constant_(layer.bias, 0)
 
     def forward(self, feature: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute objectness logits and anchor box regressions from a feature map."""
         hidden = F.relu(self.conv(feature))
         objectness = self.objectness(hidden)
         bbox_reg = self.bbox_reg(hidden)
@@ -283,23 +333,35 @@ class ROIHead(nn.Module):
         proposals: list[torch.Tensor],
         image_sizes: list[tuple[int, int]],
     ) -> torch.Tensor:
-        pooled = []
+        """Pool proposal features using torchvision's primitive RoIAlign op."""
         _, channels, feature_height, feature_width = feature.shape
-        for image_index, boxes in enumerate(proposals):
-            image_height, image_width = image_sizes[image_index]
-            scale_x = feature_width / image_width
-            scale_y = feature_height / image_height
-            for box in boxes:
-                x1, y1, x2, y2 = box
-                fx1 = int(torch.floor(x1 * scale_x).clamp(0, feature_width - 1).item())
-                fy1 = int(torch.floor(y1 * scale_y).clamp(0, feature_height - 1).item())
-                fx2 = int(torch.ceil(x2 * scale_x).clamp(fx1 + 1, feature_width).item())
-                fy2 = int(torch.ceil(y2 * scale_y).clamp(fy1 + 1, feature_height).item())
-                crop = feature[image_index : image_index + 1, :, fy1:fy2, fx1:fx2]
-                pooled.append(F.adaptive_max_pool2d(crop, self.pool_size).squeeze(0))
-        if not pooled:
+        if not any(boxes.numel() for boxes in proposals):
             return feature.new_zeros((0, channels, self.pool_size, self.pool_size))
-        return torch.stack(pooled, dim=0)
+
+        rois = []
+        for image_index, boxes in enumerate(proposals):
+            if boxes.numel() == 0:
+                continue
+            image_height, image_width = image_sizes[image_index]
+            scaled_boxes = boxes.clone()
+            scaled_boxes[:, 0::2] *= feature_width / image_width
+            scaled_boxes[:, 1::2] *= feature_height / image_height
+            batch_indices = torch.full(
+                (scaled_boxes.shape[0], 1),
+                image_index,
+                dtype=scaled_boxes.dtype,
+                device=scaled_boxes.device,
+            )
+            rois.append(torch.cat([batch_indices, scaled_boxes], dim=1))
+
+        return roi_align(
+            feature,
+            torch.cat(rois, dim=0),
+            output_size=(self.pool_size, self.pool_size),
+            spatial_scale=1.0,
+            sampling_ratio=2,
+            aligned=True,
+        )
 
     def forward(
         self,
@@ -307,6 +369,12 @@ class ROIHead(nn.Module):
         proposals: list[torch.Tensor],
         image_sizes: list[tuple[int, int]],
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute classification logits and box regressions for pooled RoIs.
+
+        Returns a tuple `(class_logits, bbox_regression)` where class_logits has
+        shape (num_rois, num_classes) and bbox_regression has shape
+        (num_rois, num_classes * 4).
+        """
         pooled = self.pool(feature, proposals, image_sizes)
         if pooled.numel() == 0:
             return pooled.new_zeros((0, self.cls_score.out_features)), pooled.new_zeros((0, self.bbox_pred.out_features))
@@ -322,13 +390,18 @@ class CustomFasterRCNN(nn.Module):
         num_classes: int,
         backbone_name: str = "resnet101",
         pretrained_backbone: bool = False,
-        trainable_backbone_layers: int = 3,
+        trainable_backbone_layers: int = 2,
         min_size: int = 512,
         max_size: int = 768,
         anchor_sizes: tuple[int, ...] | None = None,
         anchor_ratios: tuple[float, ...] | None = None,
         box_score_thresh: float = 0.05,
         box_nms_thresh: float = 0.5,
+        roi_channels: int = 256,
+        train_pre_nms_top_n: int = 1000,
+        train_post_nms_top_n: int = 300,
+        test_pre_nms_top_n: int = 600,
+        test_post_nms_top_n: int = 100,
     ) -> None:
         super().__init__()
         self.num_classes = num_classes
@@ -336,19 +409,33 @@ class CustomFasterRCNN(nn.Module):
         self.max_size = max_size
         self.box_score_thresh = box_score_thresh
         self.box_nms_thresh = box_nms_thresh
+        self.train_pre_nms_top_n = train_pre_nms_top_n
+        self.train_post_nms_top_n = train_post_nms_top_n
+        self.test_pre_nms_top_n = test_pre_nms_top_n
+        self.test_post_nms_top_n = test_post_nms_top_n
         self.backbone = ResNetBackbone(backbone_name, pretrained_backbone, trainable_backbone_layers)
         self.anchor_generator = CustomAnchorGenerator(
             sizes=anchor_sizes or (64, 128, 192, 256, 512),
             ratios=anchor_ratios or (0.33, 0.5, 1.0, 2.0),
         )
         self.rpn_head = RPNHead(self.backbone.out_channels, self.anchor_generator.num_anchors)
-        self.roi_head = ROIHead(self.backbone.out_channels, num_classes)
+        self.roi_projection = nn.Conv2d(self.backbone.out_channels, roi_channels, kernel_size=1)
+        self.roi_head = ROIHead(roi_channels, num_classes)
+        nn.init.normal_(self.roi_projection.weight, std=0.01)
+        nn.init.constant_(self.roi_projection.bias, 0)
 
     def transform(
         self,
         images: list[torch.Tensor],
         targets: list[dict[str, torch.Tensor]] | None = None,
     ) -> tuple[torch.Tensor, list[tuple[int, int]], list[tuple[int, int]], list[float], list[dict[str, torch.Tensor]] | None]:
+        """Preprocess images and targets for the network.
+
+        - Resizes images and boxes according to configured `min_size`/`max_size`.
+        - Normalizes images by ImageNet mean/std.
+        - Pads into a batch and returns scales and resized targets when present.
+        Returns: (batch, original_sizes, resized_sizes, scales, new_targets_or_None)
+        """
         normalized_images = []
         original_sizes = []
         resized_sizes = []
@@ -376,6 +463,11 @@ class CustomFasterRCNN(nn.Module):
         targets: list[dict[str, torch.Tensor]],
         image_sizes: list[tuple[int, int]],
     ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+        """Match anchors to GT boxes to produce per-anchor RPN training targets.
+
+        Produces two lists (per-image): labels (-1 ignore, 0 negative, 1 positive)
+        and regression targets for positive anchors (encoded deltas).
+        """
         labels = []
         regression_targets = []
         for target, image_size in zip(targets, image_sizes):
@@ -398,6 +490,11 @@ class CustomFasterRCNN(nn.Module):
         return labels, regression_targets
 
     def sample_labels(self, labels: torch.Tensor, batch_size: int, positive_fraction: float) -> torch.Tensor:
+        """Sample a balanced subset of positive and negative indices.
+
+        Ensures up to `batch_size` samples with approximately
+        `positive_fraction` positives when available.
+        """
         positive = torch.where(labels == 1)[0]
         negative = torch.where(labels == 0)[0]
         num_positive = min(int(batch_size * positive_fraction), positive.numel())
@@ -414,6 +511,12 @@ class CustomFasterRCNN(nn.Module):
         targets: list[dict[str, torch.Tensor]],
         image_sizes: list[tuple[int, int]],
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute RPN objectness and box regression losses for a batch.
+
+        Assigns targets to anchors, samples anchors per image, and computes
+        binary cross-entropy for objectness and Smooth L1 for box regression.
+        Returns (objectness_loss, box_loss) averaged over images.
+        """
         labels, regression_targets = self.assign_rpn_targets(anchors, targets, image_sizes)
         sampled_indices = []
         for labels_per_image in labels:
@@ -444,9 +547,14 @@ class CustomFasterRCNN(nn.Module):
         anchors: torch.Tensor,
         image_sizes: list[tuple[int, int]],
     ) -> list[torch.Tensor]:
+        """Decode RPN predictions into final proposals per image.
+
+        - Selects top-k anchors by objectness, decodes bbox deltas, clips boxes,
+        - filters tiny boxes, and applies NMS. Returns list of proposal tensors.
+        """
         proposals = []
-        pre_nms_top_n = 2000 if self.training else 1000
-        post_nms_top_n = 1000 if self.training else 300
+        pre_nms_top_n = self.train_pre_nms_top_n if self.training else self.test_pre_nms_top_n
+        post_nms_top_n = self.train_post_nms_top_n if self.training else self.test_post_nms_top_n
         for image_index, image_size in enumerate(image_sizes):
             scores = objectness[image_index].sigmoid()
             num_top = min(pre_nms_top_n, scores.numel())
@@ -455,7 +563,7 @@ class CustomFasterRCNN(nn.Module):
             boxes = clip_boxes_to_image(boxes, image_size)
             keep = remove_small_boxes(boxes, min_size=2)
             boxes, top_scores = boxes[keep], top_scores[keep]
-            keep = nms(boxes, top_scores, 0.7)[:post_nms_top_n]
+            keep = torchvision_nms(boxes, top_scores, 0.7)[:post_nms_top_n]
             proposals.append(boxes[keep].detach())
         return proposals
 
@@ -464,6 +572,12 @@ class CustomFasterRCNN(nn.Module):
         proposals: list[torch.Tensor],
         targets: list[dict[str, torch.Tensor]],
     ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+        """Assign labels and regression targets to sampled RoIs for the ROI head.
+
+        Augments proposals with GT, matches proposals to GT boxes, samples a
+        fixed number of RoIs per image, and returns sampled proposals, labels,
+        and regression targets.
+        """
         sampled_proposals = []
         labels = []
         regression_targets = []
@@ -495,6 +609,12 @@ class CustomFasterRCNN(nn.Module):
         labels: list[torch.Tensor],
         regression_targets: list[torch.Tensor],
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute classification and box regression losses for ROI head.
+
+        Flattens per-image sampled labels and regression targets and computes
+        cross-entropy for classification and Smooth L1 for box regression
+        over positive samples.
+        """
         labels_cat = torch.cat(labels, dim=0)
         regression_targets_cat = torch.cat(regression_targets, dim=0)
         classification_loss = F.cross_entropy(class_logits, labels_cat)
@@ -518,6 +638,12 @@ class CustomFasterRCNN(nn.Module):
         image_sizes: list[tuple[int, int]],
         original_sizes: list[tuple[int, int]],
     ) -> list[dict[str, torch.Tensor]]:
+        """Turn raw ROI outputs into final per-image detection dicts.
+
+        Applies softmax, decodes class-specific boxes, thresholds by score,
+        runs per-class NMS, rescales boxes to original image sizes and returns
+        a list of dicts with `boxes`, `labels`, and `scores` per image.
+        """
         scores = F.softmax(class_logits, dim=-1)
         box_regression = box_regression.reshape(box_regression.shape[0], self.num_classes, 4)
         results = []
@@ -540,7 +666,7 @@ class CustomFasterRCNN(nn.Module):
                 keep_size = remove_small_boxes(decoded, min_size=2)
                 decoded = decoded[keep_size]
                 kept_scores = class_scores[keep][keep_size]
-                keep_nms = nms(decoded, kept_scores, self.box_nms_thresh)
+                keep_nms = torchvision_nms(decoded, kept_scores, self.box_nms_thresh)
                 image_boxes.append(decoded[keep_nms])
                 image_scores.append(kept_scores[keep_nms])
                 image_labels.append(torch.full((keep_nms.numel(),), class_index, dtype=torch.long, device=boxes.device))
@@ -569,6 +695,11 @@ class CustomFasterRCNN(nn.Module):
         images: list[torch.Tensor],
         targets: list[dict[str, torch.Tensor]] | None = None,
     ) -> dict[str, torch.Tensor] | list[dict[str, torch.Tensor]]:
+        """Forward pass: returns losses during training or detections during eval.
+
+        Expects `targets` (list of dicts with `boxes` and `labels`) in training
+        mode. In eval mode returns a list of detection dicts for each image.
+        """
         if self.training and targets is None:
             raise ValueError("targets are required in training mode.")
         batch, original_sizes, resized_sizes, _scales, resized_targets = self.transform(images, targets)
@@ -576,6 +707,7 @@ class CustomFasterRCNN(nn.Module):
         objectness, pred_bbox_deltas = self.rpn_head(feature)
         anchors = self.anchor_generator(feature, batch.shape[-2:])
         proposals = self.generate_proposals(objectness, pred_bbox_deltas, anchors, resized_sizes)
+        roi_feature = F.relu(self.roi_projection(feature))
 
         if self.training:
             assert resized_targets is not None
@@ -587,7 +719,7 @@ class CustomFasterRCNN(nn.Module):
                 resized_sizes,
             )
             sampled_proposals, labels, regression_targets = self.assign_roi_targets(proposals, resized_targets)
-            class_logits, box_regression = self.roi_head(feature, sampled_proposals, resized_sizes)
+            class_logits, box_regression = self.roi_head(roi_feature, sampled_proposals, resized_sizes)
             loss_classifier, loss_box_reg = self.roi_losses(class_logits, box_regression, labels, regression_targets)
             return {
                 "loss_classifier": loss_classifier,
@@ -596,7 +728,7 @@ class CustomFasterRCNN(nn.Module):
                 "loss_rpn_box_reg": loss_rpn_box_reg,
             }
 
-        class_logits, box_regression = self.roi_head(feature, proposals, resized_sizes)
+        class_logits, box_regression = self.roi_head(roi_feature, proposals, resized_sizes)
         return self.postprocess_detections(class_logits, box_regression, proposals, resized_sizes, original_sizes)
 
 
@@ -604,49 +736,26 @@ def create_faster_rcnn(
     num_classes: int,
     backbone_name: str = "resnet101",
     pretrained_backbone: bool = False,
-    trainable_backbone_layers: int = 3,
+    trainable_backbone_layers: int = 2,
     min_size: int = 512,
     max_size: int = 768,
     anchor_sizes: tuple[int, ...] | None = None,
     anchor_ratios: tuple[float, ...] | None = None,
-    custom: bool = False,
+    custom: bool = True,
     box_score_thresh: float = 0.05,
     box_nms_thresh: float = 0.5,
 ) -> torch.nn.Module:
-    """Create Faster R-CNN.
+    """Create the repository's custom Faster R-CNN-style detector.
 
-    By default this returns the torchvision Faster R-CNN implementation. Set
-    custom=True to use the detector implemented in this repository. In both
-    cases, pretrained_backbone controls only ImageNet backbone weights.
+    The assignment forbids complete detector implementations from torchvision,
+    Detectron2, MMDetection, YOLO, etc. This factory therefore only returns the
+    custom detector in this file. Torchvision is used only for ImageNet ResNet
+    backbone weights when pretrained_backbone=True.
     """
     if not custom:
-        if backbone_name not in BACKBONE_WEIGHTS:
-            raise ValueError(f"Unsupported backbone: {backbone_name}. Choose one of {sorted(BACKBONE_WEIGHTS)}.")
-        weights_backbone = BACKBONE_WEIGHTS[backbone_name] if pretrained_backbone else None
-        effective_trainable_layers = trainable_backbone_layers if weights_backbone is not None else 5
-        backbone = resnet_fpn_backbone(
-            backbone_name=backbone_name,
-            weights=weights_backbone,
-            trainable_layers=effective_trainable_layers,
-        )
-        anchor_generator = None
-        if anchor_sizes is not None or anchor_ratios is not None:
-            sizes = anchor_sizes or (32, 64, 128, 256, 512)
-            ratios = anchor_ratios or (0.5, 1.0, 2.0)
-            if len(sizes) != 5:
-                raise ValueError("Torchvision FPN Faster R-CNN expects exactly 5 anchor sizes.")
-            anchor_generator = TorchvisionAnchorGenerator(
-                sizes=tuple((size,) for size in sizes),
-                aspect_ratios=tuple(tuple(ratios) for _ in sizes),
-            )
-        return TorchvisionFasterRCNN(
-            backbone=backbone,
-            num_classes=num_classes,
-            min_size=min_size,
-            max_size=max_size,
-            rpn_anchor_generator=anchor_generator,
-            box_score_thresh=box_score_thresh,
-            box_nms_thresh=box_nms_thresh,
+        raise ValueError(
+            "custom=False is not allowed for this assignment. "
+            "Use the custom Faster R-CNN implementation in models/faster_rcnn.py."
         )
 
     return CustomFasterRCNN(

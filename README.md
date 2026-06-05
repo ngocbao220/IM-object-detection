@@ -17,10 +17,10 @@ WANDB_RUN_NAME=baseline bash script.sh train
 USE_WANDB=1 WANDB_RUN_NAME=baseline GPU=0 bash script.sh train
 ```
 
-By default training uses the `torchvision.models.detection` Faster R-CNN
-implementation with a ResNet-101 backbone. Only the backbone can use ImageNet
-weights; detection heads are initialized from scratch. Use a new phase name
-when comparing with older ResNet-50 runs:
+Training uses the custom Faster R-CNN-style implementation in
+`models/faster_rcnn.py` with a ResNet-101 backbone by default. Only the
+backbone can use ImageNet weights; detection heads are initialized from
+scratch. Use a new phase name when comparing with older ResNet-50 runs:
 
 ```bash
 USE_WANDB=1 WANDB_RUN_NAME=resnet101-baseline GPU=0 bash script.sh train
@@ -36,12 +36,14 @@ BACKBONE=resnet101 MIN_SIZE=768 MAX_SIZE=1024 \
 WANDB_RUN_NAME=resnet101-768x1024 GPU=0 bash script.sh train
 ```
 
-To use the repository's custom Faster R-CNN implementation instead of the
-library implementation, set `CUSTOM_MODEL=1`. Custom and library checkpoints
-are not interchangeable:
+The assignment forbids complete detector implementations from torchvision,
+Detectron2, MMDetection, YOLO, SSD, etc. This project therefore always uses the
+custom Faster R-CNN-style detector in `models/faster_rcnn.py`; torchvision is
+used only for ImageNet-pretrained ResNet backbone weights and primitive ops
+such as `torchvision.ops.roi_align` / `torchvision.ops.nms`.
 
 ```bash
-CUSTOM_MODEL=1 BACKBONE=resnet101 MIN_SIZE=512 MAX_SIZE=768 \
+BACKBONE=resnet101 MIN_SIZE=512 MAX_SIZE=768 \
 WANDB_RUN_NAME=resnet101-512x768-custom GPU=0 bash script.sh train
 ```
 
@@ -131,7 +133,7 @@ python train_hydra.py \
   augmentation.grayscale_probability=0.0
 ```
 
-Use the custom detector branch:
+The Hydra config also uses the custom detector:
 
 ```bash
 python train_hydra.py \

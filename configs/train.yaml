@@ -23,10 +23,11 @@ model:
   anchor_sizes: ""
   anchor_ratios: ""
   score_threshold: 0.5
+  eval_score_threshold: 0.05
 
 optim:
   epochs: 50
-  batch_size: 16
+  batch_size: 4
   num_workers: 0
   lr: 0.001
   momentum: 0.9

@@ -1,21 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage:
-#   bash script.sh install
-#   bash script.sh download
-#   bash script.sh train
-#   bash script.sh train-hydra
-#   bash script.sh predict
-#   bash script.sh predict-hydra
-#   bash script.sh predict-raw
-#   bash script.sh evaluate
-#   bash script.sh analyze
-#   bash script.sh tune-thresholds
-#   bash script.sh augment-ablation
-#   bash script.sh augment-summary
-#   bash script.sh all
-
 KAGGLE_DATASET_SLUG="${KAGGLE_DATASET_SLUG:-ngocbaotrinhtuan/object-detection/final_public.zip}"
 LOCAL_DATASET_ZIP="${LOCAL_DATASET_ZIP:-}"
 
@@ -45,9 +30,10 @@ LR="${LR:-0.001}"
 LR_MILESTONES="${LR_MILESTONES:-15,25}"
 LR_GAMMA="${LR_GAMMA:-0.1}"
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
+EVAL_SCORE_THRESHOLD="${EVAL_SCORE_THRESHOLD:-0.05}"
 NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
 BACKBONE="${BACKBONE:-resnet101}"
-CUSTOM_MODEL="${CUSTOM_MODEL:-0}"
+CUSTOM_MODEL="${CUSTOM_MODEL:-1}"
 MIN_SIZE="${MIN_SIZE:-768}"
 MAX_SIZE="${MAX_SIZE:-1024}"
 ANCHOR_SIZES="${ANCHOR_SIZES:-}"
@@ -120,6 +106,7 @@ train() {
     --lr_milestones "${LR_MILESTONES}"
     --lr_gamma "${LR_GAMMA}"
     --score_threshold "${SCORE_THRESHOLD}"
+    --eval_score_threshold "${EVAL_SCORE_THRESHOLD}"
     --backbone "${BACKBONE}"
     --min_size "${MIN_SIZE}"
     --max_size "${MAX_SIZE}"
@@ -145,9 +132,7 @@ train() {
     train_args+=(--resume_from "${resume_checkpoint}")
   fi
 
-  if [[ "${CUSTOM_MODEL}" == "1" ]]; then
-    train_args+=(--custom)
-  fi
+  train_args+=(--custom)
 
   if [[ -n "${ANCHOR_SIZES}" ]]; then
     train_args+=(--anchor_sizes "${ANCHOR_SIZES}")
@@ -206,9 +191,7 @@ predict() {
     predict_args+=(--anchor_ratios "${ANCHOR_RATIOS}")
   fi
 
-  if [[ "${CUSTOM_MODEL}" == "1" ]]; then
-    predict_args+=(--custom)
-  fi
+  predict_args+=(--custom)
 
   python predict.py "${predict_args[@]}"
 }

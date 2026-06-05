@@ -23,7 +23,7 @@ try:
 except ImportError:  # pragma: no cover
     wandb = None
 
-from models.faster_rcnn import BACKBONE_WEIGHTS, create_faster_rcnn
+from models.faster_rcnn import BACKBONE_WEIGHTS, CUSTOM_MODEL_VERSION, create_faster_rcnn
 from models.modules import get_device, load_checkpoint, move_targets_to_device, save_checkpoint_with_alias
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
 from utils.helper import print_run_configuration
@@ -50,11 +50,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=0.0005)
     parser.add_argument("--score_threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--eval_score_threshold",
+        type=float,
+        default=0.05,
+        help="Low confidence cutoff used only when computing validation mAP during training.",
+    )
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
     parser.add_argument(
         "--custom",
-        action="store_true",
-        help="Use the repository's custom Faster R-CNN implementation. Default uses torchvision detection.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use the repository's custom Faster R-CNN implementation. Required by the assignment.",
     )
     parser.add_argument("--min_size", type=int, default=768)
     parser.add_argument("--max_size", type=int, default=1024)
@@ -168,6 +175,56 @@ def parse_optional_float_tuple(value: str) -> tuple[float, ...] | None:
     if any(item <= 0 for item in parsed):
         raise ValueError("Anchor ratios must contain positive values.")
     return parsed
+
+
+def normalize_config_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(value)
+    return value
+
+
+def read_resume_metadata(path: str | None) -> dict[str, Any] | None:
+    if not path:
+        return None
+    resume_path = Path(path)
+    if not resume_path.exists():
+        raise FileNotFoundError(f"--resume_from checkpoint does not exist: {resume_path}")
+    return torch.load(resume_path, map_location="cpu", weights_only=False)
+
+
+def validate_resume_metadata(
+    checkpoint: dict[str, Any] | None,
+    expected_model_config: dict[str, Any],
+    expected_classes: list[str],
+) -> None:
+    if checkpoint is None:
+        return
+
+    checkpoint_classes = checkpoint.get("classes")
+    if checkpoint_classes and list(checkpoint_classes) != expected_classes:
+        raise ValueError(
+            "--resume_from checkpoint was trained with different classes. "
+            f"checkpoint_classes={checkpoint_classes}, current_classes={expected_classes}."
+        )
+
+    checkpoint_model_config = checkpoint.get("model_config") or {}
+    if not checkpoint_model_config:
+        print("Warning: resume checkpoint has no model_config; cannot verify model compatibility.")
+        return
+
+    mismatches = []
+    for key, expected_value in expected_model_config.items():
+        checkpoint_value = checkpoint_model_config.get(key)
+        if normalize_config_value(checkpoint_value) != normalize_config_value(expected_value):
+            mismatches.append(
+                f"{key}: checkpoint={checkpoint_value!r}, current={expected_value!r}"
+            )
+    if mismatches:
+        details = "; ".join(mismatches)
+        raise ValueError(
+            "--resume_from checkpoint model_config does not match the current training config. "
+            f"{details}. Use the same YAML/CLI settings as the original run or start a new run."
+        )
 
 
 def set_scheduler_resume_state(
@@ -457,6 +514,7 @@ def build_class_oversampling_sampler(
 def get_device_info(device: torch.device) -> dict[str, Any]:
     info: dict[str, Any] = {
         "selected_device": str(device),
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", "not_set"),
         "torch_version": torch.__version__,
         "python_version": platform.python_version(),
         "platform": platform.platform(),
@@ -468,6 +526,7 @@ def get_device_info(device: torch.device) -> dict[str, Any]:
         props = torch.cuda.get_device_properties(index)
         info.update(
             {
+                "cuda_logical_index": index,
                 "cuda_device_name": torch.cuda.get_device_name(index),
                 "cuda_device_count": torch.cuda.device_count(),
                 "cuda_total_memory_gb": round(props.total_memory / (1024**3), 2),
@@ -498,7 +557,10 @@ def format_session_info(info: dict[str, Any]) -> str:
         lines.append(
             "CUDA: "
             f"{info['device']['cuda_device_name']} "
-            f"({info['device']['cuda_total_memory_gb']} GB)"
+            f"({info['device']['cuda_total_memory_gb']} GB), "
+            f"logical_index={info['device']['cuda_logical_index']}, "
+            f"visible={info['device']['cuda_visible_devices']}, "
+            f"visible_count={info['device']['cuda_device_count']}"
         )
     lines.append(f"Torch: {info['device']['torch_version']}")
     lines.append(f"Classes: {', '.join(info['classes'])}")
@@ -554,6 +616,7 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"anchor_sizes={info['hyperparameters']['anchor_sizes'] or 'model_default'}, "
         f"anchor_ratios={info['hyperparameters']['anchor_ratios'] or 'model_default'}, "
         f"score_threshold={info['hyperparameters']['score_threshold']}, "
+        f"eval_score_threshold={info['hyperparameters']['eval_score_threshold']}, "
         f"augmentation={info['hyperparameters']['augmentation']}, "
         f"early_stopping={info['hyperparameters']['early_stopping']}, "
         f"early_stopping_patience={info['hyperparameters']['early_stopping_patience']}, "
@@ -580,13 +643,17 @@ def main(args: argparse.Namespace | None = None) -> None:
         raise ValueError("--early_stopping_min_delta must be greater than or equal to 0.")
     if args.min_size <= 0 or args.max_size <= 0 or args.min_size > args.max_size:
         raise ValueError("--min_size and --max_size must be positive with min_size <= max_size.")
+    if args.score_threshold < 0 or args.score_threshold > 1:
+        raise ValueError("--score_threshold must be between 0 and 1.")
+    if args.eval_score_threshold < 0 or args.eval_score_threshold > 1:
+        raise ValueError("--eval_score_threshold must be between 0 and 1.")
     lr_milestones = parse_lr_milestones(args.lr_milestones)
     anchor_sizes = parse_optional_int_tuple(args.anchor_sizes)
     anchor_ratios = parse_optional_float_tuple(args.anchor_ratios)
     if anchor_sizes is not None and not anchor_sizes:
         raise ValueError("--anchor_sizes must contain at least one value.")
-    if not args.custom and anchor_sizes is not None and len(anchor_sizes) != 5:
-        raise ValueError("--anchor_sizes must contain exactly 5 values when using torchvision Faster R-CNN.")
+    if not args.custom:
+        raise ValueError("--no-custom is not allowed because complete torchvision Faster R-CNN is forbidden.")
     probabilities = [
         args.horizontal_flip_probability,
         args.color_jitter_probability,
@@ -599,6 +666,7 @@ def main(args: argparse.Namespace | None = None) -> None:
     maybe_launch_distributed(args)
     device, rank, world_size = setup_device(args)
     is_main_process = rank == 0
+    resume_metadata = read_resume_metadata(args.resume_from)
 
     started = time.strftime("%Y%m%d-%H%M%S")
     run_name = args.wandb_run_name or f"session-{started}"
@@ -649,6 +717,16 @@ def main(args: argparse.Namespace | None = None) -> None:
         num_workers=args.num_workers,
         collate_fn=collate_fn,
     )
+    model_config = {
+        "backbone": args.backbone,
+        "custom_model": args.custom,
+        "custom_model_version": CUSTOM_MODEL_VERSION if args.custom else None,
+        "min_size": args.min_size,
+        "max_size": args.max_size,
+        "anchor_sizes": anchor_sizes,
+        "anchor_ratios": anchor_ratios,
+    }
+    validate_resume_metadata(resume_metadata, model_config, train_dataset.classes)
 
     model = create_faster_rcnn(
         num_classes=len(train_dataset.classes) + 1,
@@ -679,8 +757,6 @@ def main(args: argparse.Namespace | None = None) -> None:
     resume_epoch = 0
     if args.resume_from:
         resume_path = Path(args.resume_from)
-        if not resume_path.exists():
-            raise FileNotFoundError(f"--resume_from checkpoint does not exist: {resume_path}")
         resume_checkpoint = load_checkpoint(resume_path, unwrap_model(model), device, optimizer)
         resume_epoch = int(resume_checkpoint.get("epoch", 0))
         set_scheduler_resume_state(
@@ -725,6 +801,7 @@ def main(args: argparse.Namespace | None = None) -> None:
             "momentum": args.momentum,
             "weight_decay": args.weight_decay,
             "score_threshold": args.score_threshold,
+            "eval_score_threshold": args.eval_score_threshold,
             "backbone": args.backbone,
             "custom_model": args.custom,
             "min_size": args.min_size,
@@ -802,15 +879,6 @@ def main(args: argparse.Namespace | None = None) -> None:
                 ),
             )
     epochs_without_improvement = 0
-    model_config = {
-        "backbone": args.backbone,
-        "custom_model": args.custom,
-        "min_size": args.min_size,
-        "max_size": args.max_size,
-        "anchor_sizes": anchor_sizes,
-        "anchor_ratios": anchor_ratios,
-    }
-
     for epoch in range(resume_epoch + 1, args.epochs + 1):
         should_stop = False
         epoch_started = time.perf_counter()
@@ -852,7 +920,7 @@ def main(args: argparse.Namespace | None = None) -> None:
                 val_dataset,
                 val_loader,
                 device,
-                score_threshold=args.score_threshold,
+                score_threshold=args.eval_score_threshold,
                 max_images=args.eval_max_images,
             )
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)

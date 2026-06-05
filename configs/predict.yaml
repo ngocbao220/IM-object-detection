@@ -6,7 +6,7 @@ paths:
 
 model:
   backbone: resnet101
-  custom: false
+  custom: true
   min_size: 768
   max_size: 1024
   anchor_sizes: ""
