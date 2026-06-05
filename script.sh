@@ -27,6 +27,7 @@ BATCH_SIZE="${BATCH_SIZE:-4}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
 LOG_INTERVAL="${LOG_INTERVAL:-20}"
 EVAL_MAX_IMAGES="${EVAL_MAX_IMAGES:-0}"
+FULL_COCO_METRICS_INTERVAL="${FULL_COCO_METRICS_INTERVAL:-0}"
 ASPECT_RATIO_GROUPING="${ASPECT_RATIO_GROUPING:-1}"
 LR="${LR:-0.001}"
 LR_SCHEDULER="${LR_SCHEDULER:-cosine}"
@@ -50,6 +51,7 @@ PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 GPU="${GPU:-0}"
 GPUS="${GPUS:-}"
 USE_WANDB="${USE_WANDB:-1}"
+AMP="${AMP:-1}"
 PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
 AUGMENTATION="${AUGMENTATION:-0}"
 HORIZONTAL_FLIP_PROBABILITY="${HORIZONTAL_FLIP_PROBABILITY:-0.5}"
@@ -109,6 +111,7 @@ train() {
     --num_workers "${NUM_WORKERS}"
     --log_interval "${LOG_INTERVAL}"
     --eval_max_images "${EVAL_MAX_IMAGES}"
+    --full_coco_metrics_interval "${FULL_COCO_METRICS_INTERVAL}"
     --lr "${LR}"
     --lr_scheduler "${LR_SCHEDULER}"
     --lr_milestones "${LR_MILESTONES}"
@@ -155,6 +158,12 @@ train() {
 
   if [[ "${USE_WANDB}" == "1" ]]; then
     train_args+=(--use_wandb)
+  fi
+
+  if [[ "${AMP}" == "1" ]]; then
+    train_args+=(--amp)
+  else
+    train_args+=(--no-amp)
   fi
 
   if [[ "${PRETRAINED_BACKBONE}" == "1" ]]; then

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import gc
 import math
 import os
@@ -30,7 +31,7 @@ from models.faster_rcnn import BACKBONE_WEIGHTS, CUSTOM_MODEL_VERSION, create_fa
 from models.modules import get_device, load_checkpoint, move_targets_to_device, save_checkpoint_with_alias
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
 from utils.helper import print_run_configuration
-from utils.metric import evaluate_extended_metrics
+from utils.metric import evaluate_extended_metrics, evaluate_map
 
 
 def parse_args() -> argparse.Namespace:
@@ -111,7 +112,22 @@ def parse_args() -> argparse.Namespace:
         help="Wandb run name and saved_results subdirectory name.",
     )
     parser.add_argument("--use_wandb", action="store_true")
+    parser.add_argument(
+        "--amp",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use mixed precision on CUDA to improve throughput.",
+    )
     parser.add_argument("--eval_max_images", type=int, default=0)
+    parser.add_argument(
+        "--full_coco_metrics_interval",
+        type=int,
+        default=0,
+        help=(
+            "Compute mAP@0.75 and mAP@0.5:0.95 every N epochs. "
+            "0 disables this during training and keeps validation lightweight with AP50 only."
+        ),
+    )
     parser.add_argument("--log_interval", type=int, default=20, help="Append progress to session log every N batches.")
     parser.add_argument(
         "--aspect_ratio_grouping",
@@ -397,6 +413,8 @@ def train_one_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     epoch: int,
+    scaler: torch.amp.GradScaler | None = None,
+    amp_enabled: bool = False,
     is_main_process: bool = True,
     log_interval: int = 20,
     log_callback: Callable[[str], None] | None = None,
@@ -406,15 +424,21 @@ def train_one_epoch(
     progress = tqdm(loader, desc=f"train epoch {epoch}", leave=False, disable=not is_main_process)
 
     for batch_index, (images, targets) in enumerate(progress, start=1):
+        optimizer.zero_grad(set_to_none=True)
         images = [image.to(device) for image in images]
         targets = move_targets_to_device(list(targets), device)
 
-        loss_dict = model(images, targets)
-        losses = sum(loss for loss in loss_dict.values())
+        with torch.amp.autocast("cuda", enabled=amp_enabled):
+            loss_dict = model(images, targets)
+            losses = sum(loss for loss in loss_dict.values())
 
-        optimizer.zero_grad(set_to_none=True)
-        losses.backward()
-        optimizer.step()
+        if scaler is not None and amp_enabled:
+            scaler.scale(losses).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            losses.backward()
+            optimizer.step()
 
         batch_logs = {"loss": float(losses.detach().cpu())}
         batch_logs.update({k: float(v.detach().cpu()) for k, v in loss_dict.items()})
@@ -443,6 +467,7 @@ def compute_validation_loss(
     loader: DataLoader,
     device: torch.device,
     max_images: int = 0,
+    amp_enabled: bool = False,
     is_main_process: bool = True,
 ) -> dict[str, float]:
     """Compute Faster R-CNN validation losses without optimizer updates."""
@@ -455,8 +480,9 @@ def compute_validation_loss(
     for images, targets in progress:
         images = [image.to(device) for image in images]
         targets = move_targets_to_device(list(targets), device)
-        loss_dict = model(images, targets)
-        losses = sum(loss for loss in loss_dict.values())
+        with torch.amp.autocast("cuda", enabled=amp_enabled):
+            loss_dict = model(images, targets)
+            losses = sum(loss for loss in loss_dict.values())
 
         batch_logs = {"loss": float(losses.detach().cpu())}
         batch_logs.update({key: float(value.detach().cpu()) for key, value in loss_dict.items()})
@@ -487,6 +513,7 @@ def predict_dataset(
     device: torch.device,
     score_threshold: float,
     max_images: int = 0,
+    amp_enabled: bool = False,
     is_main_process: bool = True,
 ) -> dict[str, list[dict[str, Any]]]:
     model.eval()
@@ -496,7 +523,8 @@ def predict_dataset(
     processed_images = 0
     for images, targets in progress:
         images_on_device = [image.to(device) for image in images]
-        outputs = model(images_on_device)
+        with torch.amp.autocast("cuda", enabled=amp_enabled):
+            outputs = model(images_on_device)
         for output, target in zip(outputs, targets):
             image_index = int(target["image_id"].item())
             image_info = dataset.images[image_index]
@@ -524,11 +552,17 @@ def predict_dataset(
 def gather_prediction_dicts(local_predictions: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
     if not dist.is_initialized():
         return local_predictions
-    gathered: list[dict[str, list[dict[str, Any]]]] = [None for _ in range(dist.get_world_size())]  # type: ignore[list-item]
-    dist.all_gather_object(gathered, local_predictions)
+    rank = dist.get_rank()
+    gathered: list[dict[str, list[dict[str, Any]]] | None] | None = (
+        [None for _ in range(dist.get_world_size())] if rank == 0 else None
+    )
+    dist.gather_object(local_predictions, object_gather_list=gathered, dst=0)
+    if rank != 0:
+        return {}
     merged: dict[str, list[dict[str, Any]]] = {}
-    for predictions in gathered:
-        merged.update(predictions)
+    for predictions in gathered or []:
+        if predictions:
+            merged.update(predictions)
     return merged
 
 
@@ -599,8 +633,38 @@ def format_resource_usage(device: torch.device) -> str:
 
 def release_epoch_memory(device: torch.device) -> None:
     gc.collect()
+    if platform.system() == "Linux":
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
     if device.type == "cuda" and torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+def evaluate_training_metrics(
+    ground_truth: dict[str, list[dict[str, Any]]],
+    predictions: dict[str, list[dict[str, Any]]],
+    classes: list[str],
+    full_coco_metrics: bool = False,
+) -> dict[str, Any]:
+    if full_coco_metrics:
+        return evaluate_extended_metrics(ground_truth, predictions, classes)
+
+    result = evaluate_map(ground_truth, predictions, classes, iou_threshold=0.5)
+    result["mAP@0.5"] = result["mAP@0.5"]
+    result["mAP@0.75"] = None
+    result["mAP@0.5:0.95"] = None
+    result["iou_thresholds"] = [0.5]
+    for class_metrics in result["per_class"].values():
+        class_metrics["ap@0.5"] = class_metrics["ap"]
+        class_metrics["ap@0.75"] = None
+        class_metrics["ap@0.5:0.95"] = None
+    return result
+
+
+def format_metric_value(value: Any) -> str:
+    return f"{value:.4f}" if isinstance(value, (float, int)) else "n/a"
 
 
 def format_epoch_summary(
@@ -624,9 +688,9 @@ def format_epoch_summary(
     lines.extend(
         [
             f"├── Val Loss   : {val_logs.get('loss', 0.0):.4f}",
-            f"├── mAP@0.5    : {val_metrics['mAP@0.5']:.4f}",
-            f"├── mAP@0.75   : {val_metrics['mAP@0.75']:.4f}",
-            f"├── mAP@0.5:0.95 : {val_metrics['mAP@0.5:0.95']:.4f}",
+            f"├── mAP@0.5    : {format_metric_value(val_metrics['mAP@0.5'])}",
+            f"├── mAP@0.75   : {format_metric_value(val_metrics.get('mAP@0.75'))}",
+            f"├── mAP@0.5:0.95 : {format_metric_value(val_metrics.get('mAP@0.5:0.95'))}",
             f"├── Precision  : {val_metrics['micro_precision']:.4f}",
             f"├── Recall     : {val_metrics['micro_recall']:.4f}",
             f"├── GT Boxes   : {val_metrics['num_ground_truth_boxes']}",
@@ -638,8 +702,9 @@ def format_epoch_summary(
     for index, (class_name, metrics) in enumerate(per_class.items()):
         branch = "└──" if index == len(per_class) - 1 else "├──"
         lines.append(
-            f"│   {branch} {class_name:<8}: AP50={metrics['ap@0.5']:.4f}, "
-            f"AP75={metrics['ap@0.75']:.4f}, AP50:95={metrics['ap@0.5:0.95']:.4f}, "
+            f"│   {branch} {class_name:<8}: AP50={format_metric_value(metrics.get('ap@0.5'))}, "
+            f"AP75={format_metric_value(metrics.get('ap@0.75'))}, "
+            f"AP50:95={format_metric_value(metrics.get('ap@0.5:0.95'))}, "
             f"P={metrics['precision']:.4f}, R={metrics['recall']:.4f}"
         )
     lines.extend([f"├── LR         : {lr:.6f}", f"└── Time       : {elapsed_seconds:.1f}s"])
@@ -800,6 +865,7 @@ def format_session_info(info: dict[str, Any]) -> str:
         "Hyperparams: "
         f"epochs={info['hyperparameters']['epochs']}, "
         f"batch_size={info['hyperparameters']['batch_size']}, "
+        f"amp={info['hyperparameters']['amp']}, "
         f"lr={info['hyperparameters']['lr']}, "
         f"lr_scheduler={info['hyperparameters']['lr_scheduler']}, "
         f"lr_milestones={info['hyperparameters']['lr_milestones']}, "
@@ -813,6 +879,7 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"anchor_ratios={info['hyperparameters']['anchor_ratios'] or 'model_default'}, "
         f"score_threshold={info['hyperparameters']['score_threshold']}, "
         f"eval_score_threshold={info['hyperparameters']['eval_score_threshold']}, "
+        f"full_coco_metrics_interval={info['hyperparameters']['full_coco_metrics_interval']}, "
         f"augmentation={info['hyperparameters']['augmentation']}, "
         f"early_stopping={info['hyperparameters']['early_stopping']}, "
         f"early_stopping_patience={info['hyperparameters']['early_stopping_patience']}, "
@@ -844,6 +911,8 @@ def main(args: argparse.Namespace | None = None) -> None:
         raise ValueError("--score_threshold must be between 0 and 1.")
     if args.eval_score_threshold < 0 or args.eval_score_threshold > 1:
         raise ValueError("--eval_score_threshold must be between 0 and 1.")
+    if args.full_coco_metrics_interval < 0:
+        raise ValueError("--full_coco_metrics_interval must be greater than or equal to 0.")
     if args.min_lr < 0 or args.min_lr > args.lr:
         raise ValueError("--min_lr must be between 0 and --lr.")
     if args.plateau_patience <= 0:
@@ -869,6 +938,7 @@ def main(args: argparse.Namespace | None = None) -> None:
     maybe_launch_distributed(args)
     device, rank, world_size = setup_device(args)
     is_main_process = rank == 0
+    amp_enabled = bool(args.amp and device.type == "cuda")
     resume_metadata = read_resume_metadata(args.resume_from)
 
     started = time.strftime("%Y%m%d-%H%M%S")
@@ -966,6 +1036,7 @@ def main(args: argparse.Namespace | None = None) -> None:
         weight_decay=args.weight_decay,
     )
     scheduler = build_lr_scheduler(optimizer, args, lr_milestones)
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
     resume_checkpoint = None
     resume_epoch = 0
     if args.resume_from:
@@ -1011,6 +1082,7 @@ def main(args: argparse.Namespace | None = None) -> None:
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
+            "amp": amp_enabled,
             "lr": args.lr,
             "lr_scheduler": args.lr_scheduler,
             "lr_milestones": lr_milestones,
@@ -1022,6 +1094,7 @@ def main(args: argparse.Namespace | None = None) -> None:
             "weight_decay": args.weight_decay,
             "score_threshold": args.score_threshold,
             "eval_score_threshold": args.eval_score_threshold,
+            "full_coco_metrics_interval": args.full_coco_metrics_interval,
             "backbone": args.backbone,
             "custom_model": args.custom,
             "min_size": args.min_size,
@@ -1118,7 +1191,9 @@ def main(args: argparse.Namespace | None = None) -> None:
             optimizer,
             device,
             epoch,
-            is_main_process,
+            scaler=scaler,
+            amp_enabled=amp_enabled,
+            is_main_process=is_main_process,
             log_interval=args.log_interval,
             log_callback=(
                 lambda message: append_session_log(
@@ -1141,6 +1216,7 @@ def main(args: argparse.Namespace | None = None) -> None:
             val_loader,
             device,
             max_images=args.eval_max_images,
+            amp_enabled=amp_enabled,
             is_main_process=is_main_process,
         )
         if is_main_process:
@@ -1156,16 +1232,31 @@ def main(args: argparse.Namespace | None = None) -> None:
             device,
             score_threshold=args.eval_score_threshold,
             max_images=args.eval_max_images,
+            amp_enabled=amp_enabled,
             is_main_process=is_main_process,
         )
         val_predictions = gather_prediction_dicts(local_val_predictions)
 
         if is_main_process:
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
-            val_metrics = evaluate_extended_metrics(val_gt, val_predictions, val_dataset.classes)
+            full_coco_metrics = bool(
+                args.full_coco_metrics_interval
+                and (
+                    epoch % args.full_coco_metrics_interval == 0
+                    or epoch == args.epochs
+                )
+            )
+            val_metrics = evaluate_training_metrics(
+                val_gt,
+                val_predictions,
+                val_dataset.classes,
+                full_coco_metrics=full_coco_metrics,
+            )
             append_session_log(
                 text_log_path,
-                f"Epoch {epoch:02d} metrics computed. {format_resource_usage(device)}. Saving artifacts.",
+                f"Epoch {epoch:02d} metrics computed "
+                f"({'AP50 + COCO metrics' if full_coco_metrics else 'AP50 only'}). "
+                f"{format_resource_usage(device)}. Saving artifacts.",
             )
             epoch_seconds = time.perf_counter() - epoch_started
 
@@ -1176,11 +1267,13 @@ def main(args: argparse.Namespace | None = None) -> None:
                 **{f"train/{k}": v for k, v in train_logs.items()},
                 **{f"val/{k}": v for k, v in val_logs.items()},
                 "val/mAP@0.5": val_metrics["mAP@0.5"],
-                "val/mAP@0.75": val_metrics["mAP@0.75"],
-                "val/mAP@0.5:0.95": val_metrics["mAP@0.5:0.95"],
                 "val/micro_precision": val_metrics["micro_precision"],
                 "val/micro_recall": val_metrics["micro_recall"],
             }
+            if val_metrics.get("mAP@0.75") is not None:
+                row["val/mAP@0.75"] = val_metrics["mAP@0.75"]
+            if val_metrics.get("mAP@0.5:0.95") is not None:
+                row["val/mAP@0.5:0.95"] = val_metrics["mAP@0.5:0.95"]
             if run is not None:
                 wandb.log(row, step=epoch)
 
@@ -1246,13 +1339,12 @@ def main(args: argparse.Namespace | None = None) -> None:
                     f"Early stopping triggered at epoch {epoch:02d}. "
                     f"Best mAP@0.5={best_map:.4f}.",
                 )
-            del val_predictions, val_gt, val_metrics, epoch_metrics, row
+            del local_val_predictions, val_predictions, val_gt, val_metrics, epoch_metrics, row
             release_epoch_memory(device)
             append_session_log(text_log_path, f"Epoch {epoch:02d} cleanup completed. {format_resource_usage(device)}")
         else:
-            del val_predictions
+            del local_val_predictions, val_predictions
             release_epoch_memory(device)
-        del local_val_predictions
         if dist.is_initialized():
             metric_tensor = torch.tensor([scheduler_metric], device=device)
             dist.broadcast(metric_tensor, src=0)
