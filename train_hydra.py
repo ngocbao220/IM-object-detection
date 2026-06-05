@@ -11,8 +11,6 @@ from typing import Any
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from train import main as train_main
-
 
 def _none_if_missing(value: Any) -> Any:
     return None if value in {"", "null", "None"} else value
@@ -29,12 +27,23 @@ def _gpu_ids(gpus: Any) -> list[str]:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
-def configure_cuda_visible_devices_from_hydra(cfg: DictConfig) -> None:
+def _configured_gpu_ids(cfg: DictConfig) -> list[str]:
     gpu_ids = _gpu_ids(cfg.device.get("gpus"))
-    if not gpu_ids:
-        gpu = _none_if_missing(cfg.device.get("gpu"))
-        if gpu is not None:
-            gpu_ids = [str(gpu)]
+    if gpu_ids:
+        return gpu_ids
+
+    visible_devices = _gpu_ids(os.environ.get("CUDA_VISIBLE_DEVICES"))
+    if visible_devices:
+        return visible_devices
+
+    gpu = _none_if_missing(cfg.device.get("gpu"))
+    return [str(gpu)] if gpu is not None else []
+
+
+def configure_cuda_visible_devices_from_hydra(cfg: DictConfig) -> None:
+    if os.environ.get("LOCAL_RANK") is not None:
+        return
+    gpu_ids = _configured_gpu_ids(cfg)
     if gpu_ids:
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(gpu_ids)
         # Keep the common typo unset so CUDA/PyTorch uses the canonical plural env var.
@@ -42,7 +51,7 @@ def configure_cuda_visible_devices_from_hydra(cfg: DictConfig) -> None:
 
 
 def maybe_launch_distributed_from_hydra(cfg: DictConfig) -> None:
-    gpu_ids = _gpu_ids(cfg.device.get("gpus"))
+    gpu_ids = _configured_gpu_ids(cfg)
     already_distributed = bool(cfg.device.get("distributed", False))
     if len(gpu_ids) < 2 or already_distributed or os.environ.get("LOCAL_RANK") is not None:
         return
@@ -50,11 +59,14 @@ def maybe_launch_distributed_from_hydra(cfg: DictConfig) -> None:
     config_dir = Path(tempfile.mkdtemp(prefix="hydra_ddp_config_"))
     resolved_config = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
     resolved_config.device.distributed = True
+    resolved_config.device.gpus = ",".join(gpu_ids)
+    resolved_config.device.gpu = None
     config_path = config_dir / "train.yaml"
     OmegaConf.save(config=resolved_config, f=config_path)
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = ",".join(gpu_ids)
+    env.pop("CUDA_VISIBLE_DEVICE", None)
     command = [
         sys.executable,
         "-m",
@@ -108,7 +120,7 @@ def build_train_args(cfg: DictConfig) -> argparse.Namespace:
         lr_milestones=str(optim["lr_milestones"]),
         lr_gamma=float(optim["lr_gamma"]),
         device=_none_if_missing(device.get("device")),
-        gpu=None if _gpu_ids(device.get("gpus")) else device.get("gpu"),
+        gpu=None if (os.environ.get("LOCAL_RANK") is not None or _gpu_ids(device.get("gpus"))) else device.get("gpu"),
         gpus=_none_if_missing(device.get("gpus")),
         distributed=bool(device.get("distributed", False)) or os.environ.get("LOCAL_RANK") is not None,
         pretrained_backbone=bool(model["pretrained_backbone"]),
@@ -133,6 +145,8 @@ def build_train_args(cfg: DictConfig) -> argparse.Namespace:
 def main(cfg: DictConfig) -> None:
     configure_cuda_visible_devices_from_hydra(cfg)
     maybe_launch_distributed_from_hydra(cfg)
+    from train import main as train_main
+
     train_main(build_train_args(cfg))
 
 
