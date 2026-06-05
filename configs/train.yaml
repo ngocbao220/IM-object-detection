@@ -30,10 +30,14 @@ optim:
   batch_size: 4
   num_workers: 0
   lr: 0.001
+  lr_scheduler: cosine
   momentum: 0.9
   weight_decay: 0.0005
   lr_milestones: 15,25
   lr_gamma: 0.1
+  min_lr: 0.00001
+  plateau_patience: 3
+  plateau_factor: 0.5
 
 device:
   device: null

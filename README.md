@@ -36,6 +36,14 @@ BACKBONE=resnet101 MIN_SIZE=768 MAX_SIZE=1024 \
 WANDB_RUN_NAME=resnet101-768x1024 GPU=0 bash script.sh train
 ```
 
+Learning-rate scheduling defaults to cosine decay instead of hard drops:
+
+```bash
+LR_SCHEDULER=cosine MIN_LR=0.00001 WANDB_RUN_NAME=resnet101-cosine GPU=0 bash script.sh train
+LR_SCHEDULER=plateau PLATEAU_PATIENCE=3 PLATEAU_FACTOR=0.5 WANDB_RUN_NAME=resnet101-plateau GPU=0 bash script.sh train
+LR_SCHEDULER=multistep LR_MILESTONES=15,25 LR_GAMMA=0.1 WANDB_RUN_NAME=resnet101-multistep GPU=0 bash script.sh train
+```
+
 The assignment forbids complete detector implementations from torchvision,
 Detectron2, MMDetection, YOLO, SSD, etc. This project therefore always uses the
 custom Faster R-CNN-style detector in `models/faster_rcnn.py`; torchvision is

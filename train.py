@@ -83,6 +83,15 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated epochs at which LR is multiplied by --lr_gamma.",
     )
     parser.add_argument("--lr_gamma", type=float, default=0.1)
+    parser.add_argument(
+        "--lr_scheduler",
+        choices=["cosine", "multistep", "plateau"],
+        default="cosine",
+        help="Learning-rate scheduler. cosine avoids hard epoch drops.",
+    )
+    parser.add_argument("--min_lr", type=float, default=1e-5)
+    parser.add_argument("--plateau_patience", type=int, default=3)
+    parser.add_argument("--plateau_factor", type=float, default=0.5)
     parser.add_argument("--device", default=None)
     gpu_group = parser.add_mutually_exclusive_group()
     gpu_group.add_argument("--gpu", type=int, default=None, help="Use one CUDA GPU, e.g. --gpu 0.")
@@ -229,17 +238,53 @@ def validate_resume_metadata(
         )
 
 
+def build_lr_scheduler(
+    optimizer: torch.optim.Optimizer,
+    args: argparse.Namespace,
+    lr_milestones: list[int],
+) -> torch.optim.lr_scheduler.LRScheduler | torch.optim.lr_scheduler.ReduceLROnPlateau:
+    if args.lr_scheduler == "cosine":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(args.epochs, 1),
+            eta_min=args.min_lr,
+        )
+    if args.lr_scheduler == "plateau":
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="max",
+            factor=args.plateau_factor,
+            patience=args.plateau_patience,
+            min_lr=args.min_lr,
+        )
+    return torch.optim.lr_scheduler.MultiStepLR(
+        optimizer,
+        milestones=lr_milestones,
+        gamma=args.lr_gamma,
+    )
+
+
 def set_scheduler_resume_state(
     optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler.MultiStepLR,
+    scheduler: torch.optim.lr_scheduler.LRScheduler | torch.optim.lr_scheduler.ReduceLROnPlateau,
+    scheduler_name: str,
     completed_epoch: int,
     base_lr: float,
+    min_lr: float,
+    total_epochs: int,
     milestones: list[int],
     gamma: float,
 ) -> None:
     """Set LR for the next epoch after resuming a checkpoint saved before scheduler.step()."""
-    decay_count = sum(1 for milestone in milestones if milestone <= completed_epoch)
-    resume_lr = base_lr * (gamma ** decay_count)
+    if scheduler_name == "plateau":
+        return
+    if scheduler_name == "cosine":
+        progress = min(max(completed_epoch, 0), max(total_epochs, 1))
+        cosine = (1 + math.cos(math.pi * progress / max(total_epochs, 1))) / 2
+        resume_lr = min_lr + (base_lr - min_lr) * cosine
+    else:
+        decay_count = sum(1 for milestone in milestones if milestone <= completed_epoch)
+        resume_lr = base_lr * (gamma ** decay_count)
     for group in optimizer.param_groups:
         group["lr"] = resume_lr
     scheduler.last_epoch = completed_epoch
@@ -658,8 +703,10 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"epochs={info['hyperparameters']['epochs']}, "
         f"batch_size={info['hyperparameters']['batch_size']}, "
         f"lr={info['hyperparameters']['lr']}, "
+        f"lr_scheduler={info['hyperparameters']['lr_scheduler']}, "
         f"lr_milestones={info['hyperparameters']['lr_milestones']}, "
         f"lr_gamma={info['hyperparameters']['lr_gamma']}, "
+        f"min_lr={info['hyperparameters']['min_lr']}, "
         f"backbone={info['hyperparameters']['backbone']}, "
         f"min_size={info['hyperparameters']['min_size']}, "
         f"max_size={info['hyperparameters']['max_size']}, "
@@ -698,6 +745,12 @@ def main(args: argparse.Namespace | None = None) -> None:
         raise ValueError("--score_threshold must be between 0 and 1.")
     if args.eval_score_threshold < 0 or args.eval_score_threshold > 1:
         raise ValueError("--eval_score_threshold must be between 0 and 1.")
+    if args.min_lr < 0 or args.min_lr > args.lr:
+        raise ValueError("--min_lr must be between 0 and --lr.")
+    if args.plateau_patience <= 0:
+        raise ValueError("--plateau_patience must be greater than 0.")
+    if args.plateau_factor <= 0 or args.plateau_factor >= 1:
+        raise ValueError("--plateau_factor must be between 0 and 1.")
     lr_milestones = parse_lr_milestones(args.lr_milestones)
     anchor_sizes = parse_optional_int_tuple(args.anchor_sizes)
     anchor_ratios = parse_optional_float_tuple(args.anchor_ratios)
@@ -799,11 +852,7 @@ def main(args: argparse.Namespace | None = None) -> None:
         momentum=args.momentum,
         weight_decay=args.weight_decay,
     )
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(
-        optimizer,
-        milestones=lr_milestones,
-        gamma=args.lr_gamma,
-    )
+    scheduler = build_lr_scheduler(optimizer, args, lr_milestones)
     resume_checkpoint = None
     resume_epoch = 0
     if args.resume_from:
@@ -813,8 +862,11 @@ def main(args: argparse.Namespace | None = None) -> None:
         set_scheduler_resume_state(
             optimizer,
             scheduler,
+            args.lr_scheduler,
             resume_epoch,
             args.lr,
+            args.min_lr,
+            args.epochs,
             lr_milestones,
             args.lr_gamma,
         )
@@ -847,8 +899,12 @@ def main(args: argparse.Namespace | None = None) -> None:
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
             "lr": args.lr,
+            "lr_scheduler": args.lr_scheduler,
             "lr_milestones": lr_milestones,
             "lr_gamma": args.lr_gamma,
+            "min_lr": args.min_lr,
+            "plateau_patience": args.plateau_patience,
+            "plateau_factor": args.plateau_factor,
             "momentum": args.momentum,
             "weight_decay": args.weight_decay,
             "score_threshold": args.score_threshold,
@@ -932,6 +988,7 @@ def main(args: argparse.Namespace | None = None) -> None:
     epochs_without_improvement = 0
     for epoch in range(resume_epoch + 1, args.epochs + 1):
         should_stop = False
+        scheduler_metric = -1.0
         epoch_started = time.perf_counter()
         current_lr = optimizer.param_groups[0]["lr"]
         if is_main_process:
@@ -1016,6 +1073,7 @@ def main(args: argparse.Namespace | None = None) -> None:
                 model_config,
             )
             current_map = val_metrics["mAP@0.5"]
+            scheduler_metric = current_map
             if current_map > best_map + args.early_stopping_min_delta:
                 best_map = val_metrics["mAP@0.5"]
                 epochs_without_improvement = 0
@@ -1068,7 +1126,14 @@ def main(args: argparse.Namespace | None = None) -> None:
             del val_predictions, val_gt, val_metrics, epoch_metrics, row
             release_epoch_memory(device)
             append_session_log(text_log_path, f"Epoch {epoch:02d} cleanup completed. {format_resource_usage(device)}")
-        scheduler.step()
+        if dist.is_initialized():
+            metric_tensor = torch.tensor([scheduler_metric], device=device)
+            dist.broadcast(metric_tensor, src=0)
+            scheduler_metric = float(metric_tensor.item())
+        if args.lr_scheduler == "plateau":
+            scheduler.step(scheduler_metric)
+        else:
+            scheduler.step()
         if dist.is_initialized():
             stop_tensor = torch.tensor([int(should_stop)], device=device)
             dist.broadcast(stop_tensor, src=0)
