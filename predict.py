@@ -116,8 +116,8 @@ def predict_images(
     return results
 
 
-def main() -> None:
-    args = parse_args()
+def main(args: argparse.Namespace | None = None) -> None:
+    args = args or parse_args()
     if args.min_size <= 0 or args.max_size <= 0 or args.min_size > args.max_size:
         raise ValueError("--min_size and --max_size must be positive with min_size <= max_size.")
     image_paths = list_images(args.image_dir)

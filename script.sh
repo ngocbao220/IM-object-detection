@@ -5,7 +5,9 @@ set -euo pipefail
 #   bash script.sh install
 #   bash script.sh download
 #   bash script.sh train
+#   bash script.sh train-hydra
 #   bash script.sh predict
+#   bash script.sh predict-hydra
 #   bash script.sh predict-raw
 #   bash script.sh evaluate
 #   bash script.sh analyze
@@ -174,6 +176,10 @@ train() {
   python train.py "${train_args[@]}"
 }
 
+train_hydra() {
+  python train_hydra.py "$@"
+}
+
 predict() {
   predict_args=(
     --image_dir "${PREDICT_IMAGE_DIR}"
@@ -199,6 +205,10 @@ predict() {
   fi
 
   python predict.py "${predict_args[@]}"
+}
+
+predict_hydra() {
+  python predict_hydra.py "$@"
 }
 
 evaluate() {
@@ -290,8 +300,16 @@ case "${1:-help}" in
   train)
     train
     ;;
+  train-hydra)
+    shift
+    train_hydra "$@"
+    ;;
   predict)
     predict
+    ;;
+  predict-hydra)
+    shift
+    predict_hydra "$@"
     ;;
   evaluate)
     evaluate

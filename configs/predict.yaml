@@ -1,0 +1,28 @@
+paths:
+  image_dir: ./public/val/images
+  output: ./saved_results/baseline/predictions.json
+  checkpoint: ./saved_results/baseline/checkpoints/best_model.pth
+  classes: ./public/classes.json
+
+model:
+  backbone: resnet101
+  custom: false
+  min_size: 768
+  max_size: 1024
+  anchor_sizes: ""
+  anchor_ratios: ""
+  score_threshold: 0.5
+  nms_threshold: 0.5
+
+device:
+  device: null
+
+hydra:
+  run:
+    dir: hydra_logs/${now:%Y%m%d-%H%M%S}
+  sweep:
+    dir: hydra_logs/multirun/${now:%Y%m%d-%H%M%S}
+    subdir: ${hydra.job.num}
+  output_subdir: .hydra
+  job:
+    chdir: false

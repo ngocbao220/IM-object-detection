@@ -569,8 +569,8 @@ def format_session_info(info: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
-    args = parse_args()
+def main(args: argparse.Namespace | None = None) -> None:
+    args = args or parse_args()
     if args.log_interval <= 0:
         raise ValueError("--log_interval must be greater than 0.")
     if args.early_stopping_patience <= 0:

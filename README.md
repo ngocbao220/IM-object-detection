@@ -106,3 +106,58 @@ bash script.sh train
 WANDB_RUN_NAME=baseline bash script.sh predict
 WANDB_RUN_NAME=baseline bash script.sh evaluate
 ```
+
+5. Hydra configuration:
+
+```bash
+python train_hydra.py
+python predict_hydra.py
+```
+
+Hydra logs and resolved configs are written under:
+
+```text
+hydra_logs/<YYYYMMDD-HHMMSS>/
+├── train_hydra.log
+└── .hydra/
+```
+
+Override parameters from the command line:
+
+```bash
+python train_hydra.py \
+  run.name=resnet101-512x768-fliponly \
+  model.backbone=resnet101 \
+  model.min_size=512 \
+  model.max_size=768 \
+  augmentation.enabled=true \
+  augmentation.horizontal_flip_probability=0.5 \
+  augmentation.color_jitter_probability=0.0 \
+  augmentation.grayscale_probability=0.0
+```
+
+Use the custom detector branch:
+
+```bash
+python train_hydra.py \
+  run.name=resnet101-custom \
+  model.custom=true
+```
+
+Resume with Hydra:
+
+```bash
+python train_hydra.py \
+  run.name=resnet101-512x768-fliponly \
+  paths.resume_from=saved_results/resnet101-512x768-fliponly/checkpoints/last_model.pth \
+  optim.epochs=50
+```
+
+Multi-GPU Hydra training can be requested with `device.gpus`. If it contains
+more than one GPU id, DDP is launched automatically:
+
+```bash
+python train_hydra.py \
+  run.name=resnet101-ddp \
+  device.gpus=0,1
+```

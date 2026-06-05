@@ -1,0 +1,66 @@
+paths:
+  train_data: ./public/annotations/train.json
+  val_data: ./public/annotations/val.json
+  image_dir: ./public/train/images
+  val_image_dir: ./public/val/images
+  saved_results_dir: ./saved_results
+  checkpoint_dir: null
+  resume_from: null
+
+run:
+  name: baseline
+  use_wandb: true
+  wandb_project: object-detection-final
+  eval_max_images: 0
+  log_interval: 20
+
+model:
+  backbone: resnet101
+  custom: false
+  pretrained_backbone: true
+  min_size: 768
+  max_size: 1024
+  anchor_sizes: ""
+  anchor_ratios: ""
+  score_threshold: 0.5
+
+optim:
+  epochs: 30
+  batch_size: 4
+  num_workers: 2
+  lr: 0.001
+  momentum: 0.9
+  weight_decay: 0.0005
+  lr_milestones: 15,25
+  lr_gamma: 0.1
+
+device:
+  device: null
+  gpu: 0
+  gpus: null
+  distributed: false
+
+augmentation:
+  enabled: false
+  horizontal_flip_probability: 0.5
+  color_jitter_probability: 0.3
+  grayscale_probability: 0.05
+
+oversampling:
+  class_name: null
+  factor: 1.0
+
+early_stopping:
+  enabled: true
+  patience: 7
+  min_delta: 0.001
+
+hydra:
+  run:
+    dir: hydra_logs/${now:%Y%m%d-%H%M%S}
+  sweep:
+    dir: hydra_logs/multirun/${now:%Y%m%d-%H%M%S}
+    subdir: ${hydra.job.num}
+  output_subdir: .hydra
+  job:
+    chdir: false
