@@ -35,10 +35,6 @@ def _configured_gpu_ids(cfg: DictConfig) -> tuple[list[str], str]:
     gpu = _none_if_missing(cfg.device.get("gpu"))
     if gpu is not None:
         return [str(gpu)], "gpu"
-
-    visible_devices = _gpu_ids(os.environ.get("CUDA_VISIBLE_DEVICES"))
-    if visible_devices:
-        return visible_devices, "env"
     return [], "none"
 
 
@@ -61,7 +57,7 @@ def maybe_launch_distributed_from_hydra(cfg: DictConfig) -> None:
     config_dir = Path(tempfile.mkdtemp(prefix="hydra_ddp_config_"))
     resolved_config = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
     resolved_config.device.distributed = True
-    resolved_config.device.gpus = ",".join(gpu_ids)
+    resolved_config.device.gpus = None
     resolved_config.device.gpu = None
     config_path = config_dir / "train.yaml"
     OmegaConf.save(config=resolved_config, f=config_path)
@@ -98,7 +94,7 @@ def build_train_args(cfg: DictConfig) -> argparse.Namespace:
     oversampling = data["oversampling"]
     early_stopping = data["early_stopping"]
     gpu_ids, gpu_source = _configured_gpu_ids(cfg)
-    single_visible_gpu = gpu_source in {"gpu", "env"} and len(gpu_ids) == 1
+    single_visible_gpu = gpu_source == "gpu" and len(gpu_ids) == 1
 
     return argparse.Namespace(
         train_data=paths["train_data"],
@@ -125,7 +121,7 @@ def build_train_args(cfg: DictConfig) -> argparse.Namespace:
         lr_gamma=float(optim["lr_gamma"]),
         device=_none_if_missing(device.get("device")),
         gpu=0 if single_visible_gpu else None,
-        gpus=_none_if_missing(device.get("gpus")) if gpu_source == "gpus" else None,
+        gpus=_none_if_missing(device.get("gpus")) if (gpu_source == "gpus" and os.environ.get("LOCAL_RANK") is None) else None,
         distributed=bool(device.get("distributed", False)) or os.environ.get("LOCAL_RANK") is not None,
         pretrained_backbone=bool(model["pretrained_backbone"]),
         wandb_project=run["wandb_project"],
