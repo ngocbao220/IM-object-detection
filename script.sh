@@ -102,6 +102,7 @@ GPU="${GPU:-0}"
 GPUS="${GPUS:-}"
 USE_WANDB="${USE_WANDB:-1}"
 LOG_INTERVAL="${LOG_INTERVAL:-20}"
+FULL_COCO_METRICS_INTERVAL="${FULL_COCO_METRICS_INTERVAL:-0}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
 
 # =========================
@@ -164,6 +165,7 @@ train() {
     --batch_size "${BATCH_SIZE}"
     --num_workers "${NUM_WORKERS}"
     --log_interval "${LOG_INTERVAL}"
+    --full_coco_metrics_interval "${FULL_COCO_METRICS_INTERVAL}"
     --lr "${LR}"
     --lr_scheduler "${LR_SCHEDULER}"
     --lr_milestones "${LR_MILESTONES}"

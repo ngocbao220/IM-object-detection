@@ -51,6 +51,25 @@ def get_device(device: str | None = None) -> torch.device:
     return torch.device("cpu")
 
 
+def _move_checkpoint_value_to_cpu(value: Any) -> Any:
+    if torch.is_tensor(value):
+        return value.detach().cpu()
+    if isinstance(value, dict):
+        return {key: _move_checkpoint_value_to_cpu(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_move_checkpoint_value_to_cpu(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_move_checkpoint_value_to_cpu(item) for item in value)
+    return value
+
+
+def _move_optimizer_state_to_device(optimizer: torch.optim.Optimizer, device: torch.device) -> None:
+    for state in optimizer.state.values():
+        for key, value in list(state.items()):
+            if torch.is_tensor(value):
+                state[key] = value.to(device)
+
+
 def save_checkpoint(
     path: str | Path,
     model: torch.nn.Module,
@@ -62,17 +81,18 @@ def save_checkpoint(
 ) -> None:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
-            "classes": classes,
-            "metrics": metrics or {},
-            "model_config": model_config or {},
-        },
-        output,
-    )
+    checkpoint = {
+        "epoch": epoch,
+        "model_state_dict": _move_checkpoint_value_to_cpu(model.state_dict()),
+        "optimizer_state_dict": (
+            _move_checkpoint_value_to_cpu(optimizer.state_dict()) if optimizer is not None else None
+        ),
+        "classes": classes,
+        "metrics": metrics or {},
+        "model_config": model_config or {},
+    }
+    torch.save(checkpoint, output)
+    del checkpoint
 
 
 def save_checkpoint_with_alias(
@@ -101,6 +121,7 @@ def load_checkpoint(
     model.load_state_dict(checkpoint["model_state_dict"])
     if optimizer is not None and checkpoint.get("optimizer_state_dict") is not None:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        _move_optimizer_state_to_device(optimizer, device)
     return checkpoint
 
 

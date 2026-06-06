@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import gc
+import math
 import os
 import platform
+import resource
 import subprocess
 import sys
 import time
@@ -28,10 +32,10 @@ from utils.helper import (
     get_device,
     load_checkpoint,
     move_targets_to_device,
-    print_run_configuration,
     save_checkpoint_with_alias,
 )
 from utils.metric import evaluate_extended_metrics
+from utils.metric import evaluate_map
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,6 +110,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--eval_max_images", type=int, default=0)
+    parser.add_argument(
+        "--full_coco_metrics_interval",
+        type=int,
+        default=0,
+        help="Compute mAP@0.75 and mAP@0.5:0.95 every N epochs. 0 disables during training.",
+    )
     parser.add_argument("--log_interval", type=int, default=20, help="Append progress to session log every N batches.")
     parser.add_argument(
         "--augmentation",
@@ -277,10 +287,10 @@ def train_one_epoch(
         images = [image.to(device) for image in images]
         targets = move_targets_to_device(list(targets), device)
 
+        optimizer.zero_grad(set_to_none=True)
         loss_dict = model(images, targets)
         losses = sum(loss for loss in loss_dict.values())
 
-        optimizer.zero_grad(set_to_none=True)
         losses.backward()
         optimizer.step()
 
@@ -293,8 +303,11 @@ def train_one_epoch(
             log_callback(
                 f"Epoch {epoch:02d} train batch [{batch_index}/{len(loader)}] "
                 f"loss={batch_logs['loss']:.4f} "
-                f"avg_loss={totals['loss'] / batch_index:.4f}"
+                f"avg_loss={totals['loss'] / batch_index:.4f}. "
+                f"{format_resource_usage(device)}"
             )
+
+        del images, targets, loss_dict, losses, batch_logs
 
     if dist.is_initialized():
         keys = sorted(totals)
@@ -335,6 +348,7 @@ def compute_validation_loss(
         progress.set_postfix(loss=f"{batch_logs['loss']:.4f}")
         if max_images and num_images >= max_images:
             break
+        del images, targets, loss_dict, losses, batch_logs
 
     model.eval()
     return {key: value / max(num_batches, 1) for key, value in totals.items()}
@@ -376,7 +390,9 @@ def predict_dataset(
             predictions[image_id] = image_predictions
             image_offset += 1
             if max_images and image_offset >= max_images:
+                del images_on_device, outputs
                 return predictions
+        del images_on_device, outputs
     return predictions
 
 
@@ -402,6 +418,81 @@ def append_session_log(path: Path, message: str, timestamp: bool = True) -> None
         os.fsync(f.fileno())
 
 
+def read_process_memory_mb() -> dict[str, float]:
+    rss_mb = 0.0
+    peak_rss_mb = 0.0
+    try:
+        with Path("/proc/self/status").open("r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss_mb = float(line.split()[1]) / 1024
+                elif line.startswith("VmHWM:"):
+                    peak_rss_mb = float(line.split()[1]) / 1024
+    except FileNotFoundError:
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        # Linux reports KB, macOS reports bytes. The project trains on Linux,
+        # but this keeps local syntax checks readable on macOS.
+        peak_rss_mb = usage.ru_maxrss / (1024 if sys.platform != "darwin" else 1024**2)
+    return {"rss_mb": rss_mb, "peak_rss_mb": peak_rss_mb}
+
+
+def format_resource_usage(device: torch.device) -> str:
+    memory = read_process_memory_mb()
+    parts = [
+        f"rss={memory['rss_mb']:.1f}MB" if memory["rss_mb"] else "rss=n/a",
+        f"peak_rss={memory['peak_rss_mb']:.1f}MB" if memory["peak_rss_mb"] else "peak_rss=n/a",
+    ]
+    if device.type == "cuda" and torch.cuda.is_available():
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        free_bytes, total_bytes = torch.cuda.mem_get_info(index)
+        parts.extend(
+            [
+                f"cuda_alloc={torch.cuda.memory_allocated(index) / 1024**2:.1f}MB",
+                f"cuda_reserved={torch.cuda.memory_reserved(index) / 1024**2:.1f}MB",
+                f"cuda_peak_alloc={torch.cuda.max_memory_allocated(index) / 1024**2:.1f}MB",
+                f"cuda_free={free_bytes / 1024**2:.1f}MB",
+                f"cuda_total={total_bytes / 1024**2:.1f}MB",
+            ]
+        )
+    return "Resources: " + ", ".join(parts)
+
+
+def release_epoch_memory(device: torch.device) -> None:
+    gc.collect()
+    if sys.platform.startswith("linux"):
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except OSError:
+            pass
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats(device)
+
+
+def evaluate_training_metrics(
+    ground_truth: dict[str, list[dict[str, Any]]],
+    predictions: dict[str, list[dict[str, Any]]],
+    classes: list[str],
+    full_metrics: bool,
+) -> dict[str, Any]:
+    if full_metrics:
+        return evaluate_extended_metrics(ground_truth, predictions, classes)
+
+    metrics = evaluate_map(ground_truth, predictions, classes, iou_threshold=0.5)
+    metrics["mAP@0.5"] = metrics["mAP@0.5"]
+    metrics["mAP@0.75"] = None
+    metrics["mAP@0.5:0.95"] = None
+    for class_metrics in metrics["per_class"].values():
+        class_metrics["ap@0.5"] = class_metrics["ap"]
+        class_metrics["ap@0.75"] = None
+        class_metrics["ap@0.5:0.95"] = None
+    return metrics
+
+
+def format_metric_value(value: Any) -> str:
+    return "n/a" if value is None else f"{float(value):.4f}"
+
+
 def format_epoch_summary(
     epoch: int,
     total_epochs: int,
@@ -424,8 +515,8 @@ def format_epoch_summary(
         [
             f"├── Val Loss   : {val_logs.get('loss', 0.0):.4f}",
             f"├── mAP@0.5    : {val_metrics['mAP@0.5']:.4f}",
-            f"├── mAP@0.75   : {val_metrics['mAP@0.75']:.4f}",
-            f"├── mAP@0.5:0.95 : {val_metrics['mAP@0.5:0.95']:.4f}",
+            f"├── mAP@0.75   : {format_metric_value(val_metrics.get('mAP@0.75'))}",
+            f"├── mAP@0.5:0.95 : {format_metric_value(val_metrics.get('mAP@0.5:0.95'))}",
             f"├── Precision  : {val_metrics['micro_precision']:.4f}",
             f"├── Recall     : {val_metrics['micro_recall']:.4f}",
             f"├── GT Boxes   : {val_metrics['num_ground_truth_boxes']}",
@@ -437,8 +528,9 @@ def format_epoch_summary(
     for index, (class_name, metrics) in enumerate(per_class.items()):
         branch = "└──" if index == len(per_class) - 1 else "├──"
         lines.append(
-            f"│   {branch} {class_name:<8}: AP50={metrics['ap@0.5']:.4f}, "
-            f"AP75={metrics['ap@0.75']:.4f}, AP50:95={metrics['ap@0.5:0.95']:.4f}, "
+            f"│   {branch} {class_name:<8}: AP50={format_metric_value(metrics.get('ap@0.5'))}, "
+            f"AP75={format_metric_value(metrics.get('ap@0.75'))}, "
+            f"AP50:95={format_metric_value(metrics.get('ap@0.5:0.95'))}, "
             f"P={metrics['precision']:.4f}, R={metrics['recall']:.4f}"
         )
     lines.extend([f"├── LR         : {lr:.6f}", f"└── Time       : {elapsed_seconds:.1f}s"])
@@ -590,30 +682,48 @@ def format_session_info(info: dict[str, Any]) -> str:
         f"({info['model']['trainable_parameters']:,}/"
         f"{info['model']['total_parameters']:,} trainable/total params)"
     )
-    lines.append(
-        "Hyperparams: "
-        f"epochs={info['hyperparameters']['epochs']}, "
-        f"batch_size={info['hyperparameters']['batch_size']}, "
-        f"lr={info['hyperparameters']['lr']}, "
-        f"lr_scheduler={info['hyperparameters']['lr_scheduler']}, "
-        f"lr_milestones={info['hyperparameters']['lr_milestones']}, "
-        f"lr_gamma={info['hyperparameters']['lr_gamma']}, "
-        f"min_lr={info['hyperparameters']['min_lr']}, "
-        f"plateau_patience={info['hyperparameters']['plateau_patience']}, "
-        f"plateau_factor={info['hyperparameters']['plateau_factor']}, "
-        f"backbone={info['hyperparameters']['backbone']}, "
-        f"min_size={info['hyperparameters']['min_size']}, "
-        f"max_size={info['hyperparameters']['max_size']}, "
-        f"custom_model={info['hyperparameters']['custom_model']}, "
-        f"anchor_sizes={info['hyperparameters']['anchor_sizes'] or 'model_default'}, "
-        f"anchor_ratios={info['hyperparameters']['anchor_ratios'] or 'model_default'}, "
-        f"score_threshold={info['hyperparameters']['score_threshold']}, "
-        f"augmentation={info['hyperparameters']['augmentation']}, "
-        f"early_stopping={info['hyperparameters']['early_stopping']}, "
-        f"early_stopping_patience={info['hyperparameters']['early_stopping_patience']}, "
-        f"early_stopping_min_delta={info['hyperparameters']['early_stopping_min_delta']}, "
-        f"num_workers={info['hyperparameters']['num_workers']}, "
-        f"log_interval={info['hyperparameters']['log_interval']}"
+    hp = info["hyperparameters"]
+    lines.extend(
+        [
+            "Hyperparameters",
+            f"├── Training",
+            f"│   ├── epochs             : {hp['epochs']}",
+            f"│   ├── batch_size         : {hp['batch_size']}",
+            f"│   ├── num_workers        : {hp['num_workers']}",
+            f"│   ├── augmentation       : {hp['augmentation']}",
+            f"│   ├── oversample_class   : {hp['oversample_class'] or 'disabled'}",
+            f"│   └── oversample_factor  : {hp['oversample_factor']}",
+            f"├── Optimizer",
+            f"│   ├── lr                 : {hp['lr']}",
+            f"│   ├── momentum           : {hp['momentum']}",
+            f"│   └── weight_decay       : {hp['weight_decay']}",
+            f"├── LR Scheduler",
+            f"│   ├── type               : {hp['lr_scheduler']}",
+            f"│   ├── milestones         : {hp['lr_milestones']}",
+            f"│   ├── gamma              : {hp['lr_gamma']}",
+            f"│   ├── min_lr             : {hp['min_lr']}",
+            f"│   ├── plateau_patience   : {hp['plateau_patience']}",
+            f"│   └── plateau_factor     : {hp['plateau_factor']}",
+            f"├── Model",
+            f"│   ├── implementation     : {'Custom' if hp['custom_model'] else 'Torchvision'}",
+            f"│   ├── backbone           : {hp['backbone']}",
+            f"│   ├── pretrained_backbone: {hp['pretrained_backbone']}",
+            f"│   ├── min_size           : {hp['min_size']}",
+            f"│   ├── max_size           : {hp['max_size']}",
+            f"│   ├── anchor_sizes       : {hp['anchor_sizes'] or 'model_default'}",
+            f"│   └── anchor_ratios      : {hp['anchor_ratios'] or 'model_default'}",
+            f"├── Validation",
+            f"│   ├── score_threshold    : {hp['score_threshold']}",
+            f"│   ├── eval_max_images    : {hp['eval_max_images'] or 'all'}",
+            f"│   └── full_coco_interval : {hp['full_coco_metrics_interval'] or 'disabled'}",
+            f"├── Early Stopping",
+            f"│   ├── enabled            : {hp['early_stopping']}",
+            f"│   ├── patience           : {hp['early_stopping_patience']}",
+            f"│   └── min_delta          : {hp['early_stopping_min_delta']}",
+            f"└── Logging",
+            f"    ├── log_interval       : {hp['log_interval']}",
+            f"    └── use_wandb          : {hp['use_wandb']}",
+        ]
     )
     lines.append(f"Saved results dir: {info['paths']['saved_results_dir']}")
     lines.append(f"Checkpoint dir: {info['paths']['checkpoint_dir']}")
@@ -640,6 +750,8 @@ def main() -> None:
         raise ValueError("--plateau_patience must be greater than 0.")
     if args.plateau_factor <= 0 or args.plateau_factor >= 1:
         raise ValueError("--plateau_factor must be between 0 and 1.")
+    if args.full_coco_metrics_interval < 0:
+        raise ValueError("--full_coco_metrics_interval must be greater than or equal to 0.")
     lr_milestones = parse_lr_milestones(args.lr_milestones)
     anchor_sizes = parse_optional_int_tuple(args.anchor_sizes)
     anchor_ratios = parse_optional_float_tuple(args.anchor_ratios)
@@ -666,51 +778,6 @@ def main() -> None:
         raise ValueError("--wandb_run_name must be a single folder-safe name.")
     saved_results_root = Path(args.checkpoint_dir or args.saved_results_dir)
     saved_results_dir = saved_results_root / run_name
-    if is_main_process:
-        print_run_configuration(
-            "Training Configuration",
-            {
-                "run_name": run_name,
-                "train_data": Path(args.train_data),
-                "val_data": Path(args.val_data),
-                "train_image_dir": Path(args.image_dir),
-                "val_image_dir": Path(args.val_image_dir),
-                "saved_results_root": saved_results_root,
-                "run_results_dir": saved_results_dir,
-                "resume_from": args.resume_from or "disabled",
-                "device": device,
-                "world_size": world_size,
-                "gpus": args.gpus or args.gpu or "auto",
-                "epochs": args.epochs,
-                "batch_size": args.batch_size,
-                "num_workers": args.num_workers,
-                "lr": args.lr,
-                "lr_scheduler": args.lr_scheduler,
-                "lr_milestones": lr_milestones,
-                "lr_gamma": args.lr_gamma,
-                "min_lr": args.min_lr,
-                "plateau_patience": args.plateau_patience,
-                "plateau_factor": args.plateau_factor,
-                "momentum": args.momentum,
-                "weight_decay": args.weight_decay,
-                "pretrained_backbone": args.pretrained_backbone,
-                "augmentation": args.augmentation,
-                "horizontal_flip_probability": args.horizontal_flip_probability,
-                "color_jitter_probability": args.color_jitter_probability,
-                "grayscale_probability": args.grayscale_probability,
-                "oversample_class": args.oversample_class or "disabled",
-                "oversample_factor": args.oversample_factor,
-                "early_stopping": args.early_stopping,
-                "early_stopping_patience": args.early_stopping_patience,
-                "score_threshold_for_validation": args.score_threshold,
-                "model": f"{'Custom' if args.custom else 'Torchvision'} Faster R-CNN {args.backbone}",
-                "custom_model": args.custom,
-                "min_size": args.min_size,
-                "max_size": args.max_size,
-                "anchor_sizes": anchor_sizes or "model_default",
-                "anchor_ratios": anchor_ratios or "model_default",
-            },
-        )
     checkpoint_dir = saved_results_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     log_dir = saved_results_dir / "logs"
@@ -840,7 +907,9 @@ def main() -> None:
             "anchor_sizes": anchor_sizes,
             "anchor_ratios": anchor_ratios,
             "eval_max_images": args.eval_max_images,
+            "full_coco_metrics_interval": args.full_coco_metrics_interval,
             "log_interval": args.log_interval,
+            "use_wandb": args.use_wandb,
             "pretrained_backbone": args.pretrained_backbone,
             "augmentation": args.augmentation,
             "horizontal_flip_probability": args.horizontal_flip_probability,
@@ -922,7 +991,10 @@ def main() -> None:
         epoch_started = time.perf_counter()
         current_lr = optimizer.param_groups[0]["lr"]
         if is_main_process:
-            append_session_log(text_log_path, f"Epoch [{epoch:02d}/{args.epochs:02d}] started.")
+            append_session_log(
+                text_log_path,
+                f"Epoch [{epoch:02d}/{args.epochs:02d}] started. {format_resource_usage(device)}",
+            )
         if isinstance(train_sampler, DistributedSampler):
             train_sampler.set_epoch(epoch)
         train_logs = train_one_epoch(
@@ -941,7 +1013,11 @@ def main() -> None:
         )
 
         if is_main_process:
-            append_session_log(text_log_path, f"Epoch {epoch:02d} training completed. Computing validation loss.")
+            append_session_log(
+                text_log_path,
+                f"Epoch {epoch:02d} training completed. Computing validation loss. "
+                f"{format_resource_usage(device)}",
+            )
             val_logs = compute_validation_loss(
                 unwrap_model(model),
                 val_loader,
@@ -951,7 +1027,7 @@ def main() -> None:
             append_session_log(
                 text_log_path,
                 f"Epoch {epoch:02d} validation loss completed: {val_logs.get('loss', 0.0):.4f}. "
-                "Computing detection metrics.",
+                f"Computing detection metrics. {format_resource_usage(device)}",
             )
             val_predictions = predict_dataset(
                 unwrap_model(model),
@@ -962,8 +1038,22 @@ def main() -> None:
                 max_images=args.eval_max_images,
             )
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
-            val_metrics = evaluate_extended_metrics(val_gt, val_predictions, val_dataset.classes)
-            append_session_log(text_log_path, f"Epoch {epoch:02d} metrics computed. Saving artifacts.")
+            full_metrics = bool(
+                args.full_coco_metrics_interval
+                and (epoch % args.full_coco_metrics_interval == 0 or epoch == args.epochs)
+            )
+            val_metrics = evaluate_training_metrics(
+                val_gt,
+                val_predictions,
+                val_dataset.classes,
+                full_metrics=full_metrics,
+            )
+            metric_mode = "full COCO metrics" if full_metrics else "mAP@0.5 only"
+            append_session_log(
+                text_log_path,
+                f"Epoch {epoch:02d} metrics computed ({metric_mode}). Saving artifacts. "
+                f"{format_resource_usage(device)}",
+            )
             epoch_seconds = time.perf_counter() - epoch_started
 
             row = {
@@ -973,11 +1063,13 @@ def main() -> None:
                 **{f"train/{k}": v for k, v in train_logs.items()},
                 **{f"val/{k}": v for k, v in val_logs.items()},
                 "val/mAP@0.5": val_metrics["mAP@0.5"],
-                "val/mAP@0.75": val_metrics["mAP@0.75"],
-                "val/mAP@0.5:0.95": val_metrics["mAP@0.5:0.95"],
                 "val/micro_precision": val_metrics["micro_precision"],
                 "val/micro_recall": val_metrics["micro_recall"],
             }
+            if val_metrics.get("mAP@0.75") is not None:
+                row["val/mAP@0.75"] = val_metrics["mAP@0.75"]
+            if val_metrics.get("mAP@0.5:0.95") is not None:
+                row["val/mAP@0.5:0.95"] = val_metrics["mAP@0.5:0.95"]
             if run is not None:
                 wandb.log(row, step=epoch)
 
@@ -1010,7 +1102,8 @@ def main() -> None:
                 append_session_log(
                     text_log_path,
                     f"Epoch {epoch:02d} improved mAP@0.5 to {best_map:.4f}. "
-                    f"Saved best checkpoint: {best_checkpoint_path.name}.",
+                    f"Saved best checkpoint: {best_checkpoint_path.name}. "
+                    f"{format_resource_usage(device)}",
                 )
             else:
                 epochs_without_improvement += 1
@@ -1032,7 +1125,6 @@ def main() -> None:
             )
             print(f"\n{epoch_summary}\n")
             append_session_log(text_log_path, epoch_summary, timestamp=False)
-            append_session_log(text_log_path, f"Epoch [{epoch:02d}/{args.epochs:02d}] completed.\n")
             should_stop = (
                 args.early_stopping
                 and epochs_without_improvement >= args.early_stopping_patience
@@ -1043,6 +1135,13 @@ def main() -> None:
                     f"Early stopping triggered at epoch {epoch:02d}. "
                     f"Best mAP@0.5={best_map:.4f}.",
                 )
+            del val_predictions, val_gt, val_metrics, val_logs, epoch_metrics, row
+            release_epoch_memory(device)
+            append_session_log(
+                text_log_path,
+                f"Epoch [{epoch:02d}/{args.epochs:02d}] completed. "
+                f"{format_resource_usage(device)}\n",
+            )
         if dist.is_initialized():
             metric_tensor = torch.tensor([scheduler_metric], device=device)
             dist.broadcast(metric_tensor, src=0)
@@ -1051,6 +1150,8 @@ def main() -> None:
             scheduler.step(scheduler_metric)
         else:
             scheduler.step()
+        if not is_main_process:
+            release_epoch_memory(device)
         if dist.is_initialized():
             stop_tensor = torch.tensor([int(should_stop)], device=device)
             dist.broadcast(stop_tensor, src=0)
