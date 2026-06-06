@@ -76,6 +76,10 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional comma-separated anchor aspect ratios, e.g. 0.33,0.5,1.0,2.0.",
     )
+    parser.add_argument("--train_pre_nms_top_n", type=int, default=1000)
+    parser.add_argument("--train_post_nms_top_n", type=int, default=300)
+    parser.add_argument("--test_pre_nms_top_n", type=int, default=600)
+    parser.add_argument("--test_post_nms_top_n", type=int, default=100)
     parser.add_argument(
         "--lr_milestones",
         default="15,25",
@@ -117,6 +121,12 @@ def parse_args() -> argparse.Namespace:
         help="Compute mAP@0.75 and mAP@0.5:0.95 every N epochs. 0 disables during training.",
     )
     parser.add_argument("--log_interval", type=int, default=20, help="Append progress to session log every N batches.")
+    parser.add_argument(
+        "--empty_cache_interval",
+        type=int,
+        default=0,
+        help="Call torch.cuda.empty_cache every N training batches. 0 disables it.",
+    )
     parser.add_argument(
         "--augmentation",
         action=argparse.BooleanOptionalAction,
@@ -277,6 +287,7 @@ def train_one_epoch(
     epoch: int,
     is_main_process: bool = True,
     log_interval: int = 20,
+    empty_cache_interval: int = 0,
     log_callback: Callable[[str], None] | None = None,
 ) -> dict[str, float]:
     model.train()
@@ -299,15 +310,20 @@ def train_one_epoch(
         for key, value in batch_logs.items():
             totals[key] = totals.get(key, 0.0) + value
         progress.set_postfix(loss=f"{batch_logs['loss']:.4f}")
-        if log_callback and (batch_index % log_interval == 0 or batch_index == len(loader)):
-            log_callback(
+        should_log = log_callback and (batch_index % log_interval == 0 or batch_index == len(loader))
+        log_message = None
+        if should_log:
+            log_message = (
                 f"Epoch {epoch:02d} train batch [{batch_index}/{len(loader)}] "
                 f"loss={batch_logs['loss']:.4f} "
-                f"avg_loss={totals['loss'] / batch_index:.4f}. "
-                f"{format_resource_usage(device)}"
+                f"avg_loss={totals['loss'] / batch_index:.4f}"
             )
 
         del images, targets, loss_dict, losses, batch_logs
+        if empty_cache_interval and device.type == "cuda" and batch_index % empty_cache_interval == 0:
+            torch.cuda.empty_cache()
+        if log_message is not None and log_callback is not None:
+            log_callback(f"{log_message}. {format_resource_usage(device)}")
 
     if dist.is_initialized():
         keys = sorted(totals)
@@ -711,7 +727,11 @@ def format_session_info(info: dict[str, Any]) -> str:
             f"│   ├── min_size           : {hp['min_size']}",
             f"│   ├── max_size           : {hp['max_size']}",
             f"│   ├── anchor_sizes       : {hp['anchor_sizes'] or 'model_default'}",
-            f"│   └── anchor_ratios      : {hp['anchor_ratios'] or 'model_default'}",
+            f"│   ├── anchor_ratios      : {hp['anchor_ratios'] or 'model_default'}",
+            f"│   ├── train_pre_nms_top_n : {hp['train_pre_nms_top_n']}",
+            f"│   ├── train_post_nms_top_n: {hp['train_post_nms_top_n']}",
+            f"│   ├── test_pre_nms_top_n  : {hp['test_pre_nms_top_n']}",
+            f"│   └── test_post_nms_top_n : {hp['test_post_nms_top_n']}",
             f"├── Validation",
             f"│   ├── score_threshold    : {hp['score_threshold']}",
             f"│   ├── eval_max_images    : {hp['eval_max_images'] or 'all'}",
@@ -722,6 +742,7 @@ def format_session_info(info: dict[str, Any]) -> str:
             f"│   └── min_delta          : {hp['early_stopping_min_delta']}",
             f"└── Logging",
             f"    ├── log_interval       : {hp['log_interval']}",
+            f"    ├── empty_cache_interval: {hp['empty_cache_interval'] or 'disabled'}",
             f"    └── use_wandb          : {hp['use_wandb']}",
         ]
     )
@@ -752,6 +773,8 @@ def main() -> None:
         raise ValueError("--plateau_factor must be between 0 and 1.")
     if args.full_coco_metrics_interval < 0:
         raise ValueError("--full_coco_metrics_interval must be greater than or equal to 0.")
+    if args.empty_cache_interval < 0:
+        raise ValueError("--empty_cache_interval must be greater than or equal to 0.")
     lr_milestones = parse_lr_milestones(args.lr_milestones)
     anchor_sizes = parse_optional_int_tuple(args.anchor_sizes)
     anchor_ratios = parse_optional_float_tuple(args.anchor_ratios)
@@ -759,6 +782,14 @@ def main() -> None:
         raise ValueError("--anchor_sizes must contain at least one value.")
     if not args.custom and anchor_sizes is not None and len(anchor_sizes) != 5:
         raise ValueError("--anchor_sizes must contain exactly 5 values when using torchvision Faster R-CNN.")
+    custom_top_n_values = [
+        args.train_pre_nms_top_n,
+        args.train_post_nms_top_n,
+        args.test_pre_nms_top_n,
+        args.test_post_nms_top_n,
+    ]
+    if any(value <= 0 for value in custom_top_n_values):
+        raise ValueError("Custom proposal top-N values must be positive.")
     probabilities = [
         args.horizontal_flip_probability,
         args.color_jitter_probability,
@@ -831,6 +862,10 @@ def main() -> None:
         anchor_sizes=anchor_sizes,
         anchor_ratios=anchor_ratios,
         custom=args.custom,
+        train_pre_nms_top_n=args.train_pre_nms_top_n,
+        train_post_nms_top_n=args.train_post_nms_top_n,
+        test_pre_nms_top_n=args.test_pre_nms_top_n,
+        test_post_nms_top_n=args.test_post_nms_top_n,
     ).to(device)
     if world_size > 1:
         model = DistributedDataParallel(model, device_ids=[device.index])
@@ -906,9 +941,14 @@ def main() -> None:
             "max_size": args.max_size,
             "anchor_sizes": anchor_sizes,
             "anchor_ratios": anchor_ratios,
+            "train_pre_nms_top_n": args.train_pre_nms_top_n,
+            "train_post_nms_top_n": args.train_post_nms_top_n,
+            "test_pre_nms_top_n": args.test_pre_nms_top_n,
+            "test_post_nms_top_n": args.test_post_nms_top_n,
             "eval_max_images": args.eval_max_images,
             "full_coco_metrics_interval": args.full_coco_metrics_interval,
             "log_interval": args.log_interval,
+            "empty_cache_interval": args.empty_cache_interval,
             "use_wandb": args.use_wandb,
             "pretrained_backbone": args.pretrained_backbone,
             "augmentation": args.augmentation,
@@ -1005,6 +1045,7 @@ def main() -> None:
             epoch,
             is_main_process,
             log_interval=args.log_interval,
+            empty_cache_interval=args.empty_cache_interval,
             log_callback=(
                 lambda message: append_session_log(text_log_path, message)
                 if is_main_process

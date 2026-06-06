@@ -217,14 +217,15 @@ def assign_rpn_targets(
     anchors: torch.Tensor,
     targets: list[dict[str, torch.Tensor]],
     image_sizes: list[tuple[int, int]],
-) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
     labels = []
-    regression_targets = []
+    matched_indices = []
+    clipped_anchors = []
     for target, image_size in zip(targets, image_sizes):
         anchors_in_image = clip_boxes_to_image(anchors, image_size)
         gt_boxes = target["boxes"]
         label = torch.full((anchors.shape[0],), -1.0, device=anchors.device)
-        matched_gt = torch.zeros_like(anchors)
+        matched_idx = torch.zeros((anchors.shape[0],), dtype=torch.long, device=anchors.device)
         if gt_boxes.numel() == 0:
             label[:] = 0
         else:
@@ -234,10 +235,10 @@ def assign_rpn_targets(
             label[max_iou >= 0.7] = 1
             best_per_gt = ious.argmax(dim=0)
             label[best_per_gt] = 1
-            matched_gt = gt_boxes[matched_idx]
-        regression_targets.append(encode_boxes(matched_gt, anchors_in_image))
         labels.append(label)
-    return labels, regression_targets
+        matched_indices.append(matched_idx)
+        clipped_anchors.append(anchors_in_image)
+    return labels, matched_indices, clipped_anchors
 
 
 def rpn_losses(
@@ -249,9 +250,10 @@ def rpn_losses(
     batch_size: int = 256,
     positive_fraction: float = 0.5,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    labels, regression_targets = assign_rpn_targets(anchors, targets, image_sizes)
-    objectness_loss = objectness.sum() * 0
-    box_loss = pred_bbox_deltas.sum() * 0
+    with torch.no_grad():
+        labels, matched_indices, clipped_anchors = assign_rpn_targets(anchors, targets, image_sizes)
+    objectness_loss = objectness.new_zeros(())
+    box_loss = pred_bbox_deltas.new_zeros(())
     for image_index, labels_per_image in enumerate(labels):
         sampled = sample_labels(labels_per_image, batch_size, positive_fraction)
         sampled_labels = labels_per_image[sampled]
@@ -261,9 +263,14 @@ def rpn_losses(
         )
         positives = sampled[sampled_labels == 1]
         if positives.numel():
+            gt_boxes = targets[image_index]["boxes"]
+            target_deltas = encode_boxes(
+                gt_boxes[matched_indices[image_index][positives]],
+                clipped_anchors[image_index][positives],
+            )
             box_loss = box_loss + F.smooth_l1_loss(
                 pred_bbox_deltas[image_index][positives],
-                regression_targets[image_index][positives],
+                target_deltas,
                 beta=1 / 9,
                 reduction="sum",
             ) / max(positives.numel(), 1)
@@ -345,7 +352,7 @@ def roi_losses(
     classification_loss = F.cross_entropy(class_logits, labels_cat)
     positive = torch.where(labels_cat > 0)[0]
     if positive.numel() == 0:
-        return classification_loss, box_regression.sum() * 0
+        return classification_loss, box_regression.new_zeros(())
     box_regression = box_regression.reshape(box_regression.shape[0], num_classes, 4)
     box_loss = F.smooth_l1_loss(
         box_regression[positive, labels_cat[positive]],

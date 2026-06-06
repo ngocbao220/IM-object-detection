@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 # Usage:
 #   bash script.sh install
 #   bash script.sh download
@@ -29,7 +29,7 @@ VAL_IMAGE_DIR="${VAL_IMAGE_DIR:-./public/val/images}"
 # 2. Run Outputs
 # =========================
 SAVED_RESULTS_DIR="${SAVED_RESULTS_DIR:-./saved_results}"
-WANDB_RUN_NAME="${WANDB_RUN_NAME:-baseline}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-custom-baseline}"
 RUN_RESULTS_DIR="${SAVED_RESULTS_DIR}/${WANDB_RUN_NAME}"
 
 CHECKPOINT="${CHECKPOINT:-${RUN_RESULTS_DIR}/checkpoints/best_model.pth}"
@@ -48,13 +48,17 @@ THRESHOLD_TUNING_OUTPUT="${THRESHOLD_TUNING_OUTPUT:-${RUN_RESULTS_DIR}/threshold
 # =========================
 # MODEL_IMPL accepts: torchvision, custom. CUSTOM_MODEL=0/1 is kept for compatibility.
 MODEL_IMPL="${MODEL_IMPL:-}"
-CUSTOM_MODEL="${CUSTOM_MODEL:-0}"
-BACKBONE="${BACKBONE:-resnet101}"
+CUSTOM_MODEL="${CUSTOM_MODEL:-1}"
+BACKBONE="${BACKBONE:-resnet50}"
 PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
-MIN_SIZE="${MIN_SIZE:-768}"
-MAX_SIZE="${MAX_SIZE:-1024}"
+MIN_SIZE="${MIN_SIZE:-512}"
+MAX_SIZE="${MAX_SIZE:-768}"
 ANCHOR_SIZES="${ANCHOR_SIZES:-}"
 ANCHOR_RATIOS="${ANCHOR_RATIOS:-}"
+TRAIN_PRE_NMS_TOP_N="${TRAIN_PRE_NMS_TOP_N:-1000}"
+TRAIN_POST_NMS_TOP_N="${TRAIN_POST_NMS_TOP_N:-300}"
+TEST_PRE_NMS_TOP_N="${TEST_PRE_NMS_TOP_N:-600}"
+TEST_POST_NMS_TOP_N="${TEST_POST_NMS_TOP_N:-100}"
 
 # =========================
 # 4. Training Params
@@ -62,10 +66,10 @@ ANCHOR_RATIOS="${ANCHOR_RATIOS:-}"
 EPOCHS="${EPOCHS:-50}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
-LR="${LR:-0.001}"
+LR="${LR:-0.005}"
 
 # LR_SCHEDULER accepts: multistep, cosine, plateau.
-LR_SCHEDULER="${LR_SCHEDULER:-multistep}"
+LR_SCHEDULER="${LR_SCHEDULER:-plateau}"
 LR_MILESTONES="${LR_MILESTONES:-15,25}"
 LR_GAMMA="${LR_GAMMA:-0.1}"
 MIN_LR="${MIN_LR:-0.00001}"
@@ -98,12 +102,15 @@ NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
 # =========================
 # 7. Runtime/Logging
 # =========================
-GPU="${GPU:-0}"
+GPU="${GPU:-1}"
 GPUS="${GPUS:-}"
 USE_WANDB="${USE_WANDB:-1}"
 LOG_INTERVAL="${LOG_INTERVAL:-20}"
 FULL_COCO_METRICS_INTERVAL="${FULL_COCO_METRICS_INTERVAL:-0}"
+EMPTY_CACHE_INTERVAL="${EMPTY_CACHE_INTERVAL:-0}"
+PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8}"
 PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
+export PYTORCH_CUDA_ALLOC_CONF
 
 # =========================
 # 8. Experiment Suites
@@ -166,6 +173,7 @@ train() {
     --num_workers "${NUM_WORKERS}"
     --log_interval "${LOG_INTERVAL}"
     --full_coco_metrics_interval "${FULL_COCO_METRICS_INTERVAL}"
+    --empty_cache_interval "${EMPTY_CACHE_INTERVAL}"
     --lr "${LR}"
     --lr_scheduler "${LR_SCHEDULER}"
     --lr_milestones "${LR_MILESTONES}"
@@ -177,6 +185,10 @@ train() {
     --backbone "${BACKBONE}"
     --min_size "${MIN_SIZE}"
     --max_size "${MAX_SIZE}"
+    --train_pre_nms_top_n "${TRAIN_PRE_NMS_TOP_N}"
+    --train_post_nms_top_n "${TRAIN_POST_NMS_TOP_N}"
+    --test_pre_nms_top_n "${TEST_PRE_NMS_TOP_N}"
+    --test_post_nms_top_n "${TEST_POST_NMS_TOP_N}"
     --horizontal_flip_probability "${HORIZONTAL_FLIP_PROBABILITY}"
     --color_jitter_probability "${COLOR_JITTER_PROBABILITY}"
     --grayscale_probability "${GRAYSCALE_PROBABILITY}"

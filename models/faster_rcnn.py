@@ -70,6 +70,10 @@ def create_custom_faster_rcnn(
     anchor_ratios: tuple[float, ...] | None = None,
     box_score_thresh: float = 0.05,
     box_nms_thresh: float = 0.5,
+    train_pre_nms_top_n: int = 1000,
+    train_post_nms_top_n: int = 300,
+    test_pre_nms_top_n: int = 600,
+    test_post_nms_top_n: int = 100,
 ) -> torch.nn.Module:
     return CustomFasterRCNN(
         num_classes=num_classes,
@@ -82,6 +86,10 @@ def create_custom_faster_rcnn(
         anchor_ratios=anchor_ratios,
         box_score_thresh=box_score_thresh,
         box_nms_thresh=box_nms_thresh,
+        train_pre_nms_top_n=train_pre_nms_top_n,
+        train_post_nms_top_n=train_post_nms_top_n,
+        test_pre_nms_top_n=test_pre_nms_top_n,
+        test_post_nms_top_n=test_post_nms_top_n,
     )
 
 
@@ -97,6 +105,10 @@ def create_faster_rcnn(
     custom: bool = False,
     box_score_thresh: float = 0.05,
     box_nms_thresh: float = 0.5,
+    train_pre_nms_top_n: int = 1000,
+    train_post_nms_top_n: int = 300,
+    test_pre_nms_top_n: int = 600,
+    test_post_nms_top_n: int = 100,
 ) -> torch.nn.Module:
     if custom:
         return create_custom_faster_rcnn(
@@ -110,6 +122,10 @@ def create_faster_rcnn(
             anchor_ratios=anchor_ratios,
             box_score_thresh=box_score_thresh,
             box_nms_thresh=box_nms_thresh,
+            train_pre_nms_top_n=train_pre_nms_top_n,
+            train_post_nms_top_n=train_post_nms_top_n,
+            test_pre_nms_top_n=test_pre_nms_top_n,
+            test_post_nms_top_n=test_post_nms_top_n,
         )
     return create_torchvision_faster_rcnn(
         num_classes=num_classes,

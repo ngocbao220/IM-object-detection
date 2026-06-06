@@ -141,14 +141,15 @@ class CustomFasterRCNN(nn.Module):
         feature = self.backbone(batch)
         objectness, pred_bbox_deltas = self.rpn_head(feature)
         anchors = self.anchor_generator(feature, batch.shape[-2:])
-        proposals = generate_proposals(
-            objectness,
-            pred_bbox_deltas,
-            anchors,
-            resized_sizes,
-            pre_nms_top_n=self.train_pre_nms_top_n if self.training else self.test_pre_nms_top_n,
-            post_nms_top_n=self.train_post_nms_top_n if self.training else self.test_post_nms_top_n,
-        )
+        with torch.no_grad():
+            proposals = generate_proposals(
+                objectness.detach(),
+                pred_bbox_deltas.detach(),
+                anchors.detach(),
+                resized_sizes,
+                pre_nms_top_n=self.train_pre_nms_top_n if self.training else self.test_pre_nms_top_n,
+                post_nms_top_n=self.train_post_nms_top_n if self.training else self.test_post_nms_top_n,
+            )
         roi_feature = F.relu(self.roi_projection(feature))
 
         if self.training:
