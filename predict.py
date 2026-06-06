@@ -13,8 +13,7 @@ from torchvision.transforms import functional as F
 from tqdm.auto import tqdm
 
 from models.faster_rcnn import BACKBONE_WEIGHTS, create_faster_rcnn
-from models.modules import get_device, load_checkpoint
-from utils.helper import load_classes, print_run_configuration
+from utils.helper import get_device, load_checkpoint, load_classes, print_run_configuration
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}

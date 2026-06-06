@@ -5,7 +5,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from utils.helper import draw_boxes_on_axis, print_run_configuration, save_json
+from notebooks.notebook_helpers import draw_boxes_on_axis
+from utils.helper import print_run_configuration, save_json
 from utils.metric import (
     analyze_detection_errors,
     annotation_to_ground_truth,

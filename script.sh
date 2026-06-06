@@ -14,6 +14,9 @@ set -euo pipefail
 #   bash script.sh augment-summary
 #   bash script.sh all
 
+# =========================
+# 1. Dataset
+# =========================
 KAGGLE_DATASET_SLUG="${KAGGLE_DATASET_SLUG:-ngocbaotrinhtuan/object-detection/final_public.zip}"
 LOCAL_DATASET_ZIP="${LOCAL_DATASET_ZIP:-}"
 
@@ -21,53 +24,106 @@ TRAIN_DATA="${TRAIN_DATA:-./public/annotations/train.json}"
 VAL_DATA="${VAL_DATA:-./public/annotations/val.json}"
 TRAIN_IMAGE_DIR="${TRAIN_IMAGE_DIR:-./public/train/images}"
 VAL_IMAGE_DIR="${VAL_IMAGE_DIR:-./public/val/images}"
+
+# =========================
+# 2. Run Outputs
+# =========================
 SAVED_RESULTS_DIR="${SAVED_RESULTS_DIR:-./saved_results}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-baseline}"
 RUN_RESULTS_DIR="${SAVED_RESULTS_DIR}/${WANDB_RUN_NAME}"
+
 CHECKPOINT="${CHECKPOINT:-${RUN_RESULTS_DIR}/checkpoints/best_model.pth}"
 RESUME_FROM="${RESUME_FROM:-}"
 RESUME_LAST="${RESUME_LAST:-0}"
 
 PREDICT_IMAGE_DIR="${PREDICT_IMAGE_DIR:-./public/val/images}"
 PREDICTIONS_OUTPUT="${PREDICTIONS_OUTPUT:-${RUN_RESULTS_DIR}/predictions.json}"
-EVAL_OUTPUT="${EVAL_OUTPUT:-${RUN_RESULTS_DIR}/evaluation.json}"
 RAW_PREDICTIONS_OUTPUT="${RAW_PREDICTIONS_OUTPUT:-${RUN_RESULTS_DIR}/predictions_raw.json}"
+EVAL_OUTPUT="${EVAL_OUTPUT:-${RUN_RESULTS_DIR}/evaluation.json}"
 ANALYSIS_OUTPUT_DIR="${ANALYSIS_OUTPUT_DIR:-${RUN_RESULTS_DIR}/analysis}"
 THRESHOLD_TUNING_OUTPUT="${THRESHOLD_TUNING_OUTPUT:-${RUN_RESULTS_DIR}/threshold_tuning.json}"
 
-EPOCHS="${EPOCHS:-30}"
-BATCH_SIZE="${BATCH_SIZE:-4}"
-NUM_WORKERS="${NUM_WORKERS:-2}"
-LOG_INTERVAL="${LOG_INTERVAL:-20}"
-LR="${LR:-0.001}"
-LR_MILESTONES="${LR_MILESTONES:-15,25}"
-LR_GAMMA="${LR_GAMMA:-0.1}"
-SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
-NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
-BACKBONE="${BACKBONE:-resnet101}"
+# =========================
+# 3. Important Model Params
+# =========================
+# MODEL_IMPL accepts: torchvision, custom. CUSTOM_MODEL=0/1 is kept for compatibility.
+MODEL_IMPL="${MODEL_IMPL:-}"
 CUSTOM_MODEL="${CUSTOM_MODEL:-0}"
+BACKBONE="${BACKBONE:-resnet101}"
+PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
 MIN_SIZE="${MIN_SIZE:-768}"
 MAX_SIZE="${MAX_SIZE:-1024}"
 ANCHOR_SIZES="${ANCHOR_SIZES:-}"
 ANCHOR_RATIOS="${ANCHOR_RATIOS:-}"
-CONFIDENCE_THRESHOLDS="${CONFIDENCE_THRESHOLDS:-0.2,0.3,0.4,0.5,0.6,0.7}"
-NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
-PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
-GPU="${GPU:-0}"
-GPUS="${GPUS:-}"
-USE_WANDB="${USE_WANDB:-1}"
-PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
+
+# =========================
+# 4. Training Params
+# =========================
+EPOCHS="${EPOCHS:-50}"
+BATCH_SIZE="${BATCH_SIZE:-4}"
+NUM_WORKERS="${NUM_WORKERS:-2}"
+LR="${LR:-0.001}"
+
+# LR_SCHEDULER accepts: multistep, cosine, plateau.
+LR_SCHEDULER="${LR_SCHEDULER:-multistep}"
+LR_MILESTONES="${LR_MILESTONES:-15,25}"
+LR_GAMMA="${LR_GAMMA:-0.1}"
+MIN_LR="${MIN_LR:-0.00001}"
+PLATEAU_PATIENCE="${PLATEAU_PATIENCE:-3}"
+PLATEAU_FACTOR="${PLATEAU_FACTOR:-0.5}"
+
+EARLY_STOPPING="${EARLY_STOPPING:-1}"
+EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-7}"
+EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-0.001}"
+
+# =========================
+# 5. Data Sampling/Augment
+# =========================
 AUGMENTATION="${AUGMENTATION:-0}"
 HORIZONTAL_FLIP_PROBABILITY="${HORIZONTAL_FLIP_PROBABILITY:-0.5}"
 COLOR_JITTER_PROBABILITY="${COLOR_JITTER_PROBABILITY:-0.3}"
 GRAYSCALE_PROBABILITY="${GRAYSCALE_PROBABILITY:-0.05}"
+
 OVERSAMPLE_CLASS="${OVERSAMPLE_CLASS:-}"
 OVERSAMPLE_FACTOR="${OVERSAMPLE_FACTOR:-1.0}"
-EARLY_STOPPING="${EARLY_STOPPING:-1}"
-EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-7}"
-EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-0.001}"
+
+# =========================
+# 6. Inference/Evaluation
+# =========================
+SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
+NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
+CONFIDENCE_THRESHOLDS="${CONFIDENCE_THRESHOLDS:-0.2,0.3,0.4,0.5,0.6,0.7}"
+NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
+
+# =========================
+# 7. Runtime/Logging
+# =========================
+GPU="${GPU:-0}"
+GPUS="${GPUS:-}"
+USE_WANDB="${USE_WANDB:-1}"
+LOG_INTERVAL="${LOG_INTERVAL:-20}"
+PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}"
+
+# =========================
+# 8. Experiment Suites
+# =========================
 ABLATION_RESULTS_DIR="${ABLATION_RESULTS_DIR:-./saved_results/augmentation_ablation}"
 ABLATION_EPOCHS="${ABLATION_EPOCHS:-30}"
+
+if [[ -n "${MODEL_IMPL}" ]]; then
+  case "${MODEL_IMPL}" in
+    custom)
+      CUSTOM_MODEL=1
+      ;;
+    torchvision)
+      CUSTOM_MODEL=0
+      ;;
+    *)
+      echo "MODEL_IMPL must be either 'torchvision' or 'custom'. Got: ${MODEL_IMPL}"
+      exit 1
+      ;;
+  esac
+fi
 
 install() {
   echo "============ Dependency Installation ============"
@@ -109,8 +165,12 @@ train() {
     --num_workers "${NUM_WORKERS}"
     --log_interval "${LOG_INTERVAL}"
     --lr "${LR}"
+    --lr_scheduler "${LR_SCHEDULER}"
     --lr_milestones "${LR_MILESTONES}"
     --lr_gamma "${LR_GAMMA}"
+    --min_lr "${MIN_LR}"
+    --plateau_patience "${PLATEAU_PATIENCE}"
+    --plateau_factor "${PLATEAU_FACTOR}"
     --score_threshold "${SCORE_THRESHOLD}"
     --backbone "${BACKBONE}"
     --min_size "${MIN_SIZE}"
