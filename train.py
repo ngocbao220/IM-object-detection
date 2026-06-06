@@ -1056,7 +1056,13 @@ def main() -> None:
         if is_main_process:
             append_session_log(
                 text_log_path,
-                f"Epoch {epoch:02d} training completed. Computing validation loss. "
+                f"Epoch {epoch:02d} training completed. "
+                f"{format_resource_usage(device)}",
+            )
+            release_epoch_memory(device)
+            append_session_log(
+                text_log_path,
+                f"Epoch {epoch:02d} cache released before validation loss. "
                 f"{format_resource_usage(device)}",
             )
             val_logs = compute_validation_loss(
@@ -1068,7 +1074,13 @@ def main() -> None:
             append_session_log(
                 text_log_path,
                 f"Epoch {epoch:02d} validation loss completed: {val_logs.get('loss', 0.0):.4f}. "
-                f"Computing detection metrics. {format_resource_usage(device)}",
+                f"{format_resource_usage(device)}",
+            )
+            release_epoch_memory(device)
+            append_session_log(
+                text_log_path,
+                f"Epoch {epoch:02d} cache released before detection metrics. "
+                f"{format_resource_usage(device)}",
             )
             val_predictions = predict_dataset(
                 unwrap_model(model),
@@ -1077,6 +1089,12 @@ def main() -> None:
                 device,
                 score_threshold=args.score_threshold,
                 max_images=args.eval_max_images,
+            )
+            release_epoch_memory(device)
+            append_session_log(
+                text_log_path,
+                f"Epoch {epoch:02d} prediction tensors moved to CPU. Computing metrics. "
+                f"{format_resource_usage(device)}",
             )
             val_gt = ground_truth_from_dataset(val_dataset, max_images=args.eval_max_images)
             full_metrics = bool(
