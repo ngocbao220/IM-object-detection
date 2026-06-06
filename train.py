@@ -60,6 +60,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--score_threshold", type=float, default=0.5)
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
     parser.add_argument(
+        "--trainable_backbone_layers",
+        type=int,
+        default=3,
+        help="Number of trainable ResNet stages. Custom model supports 0-3; torchvision supports 0-5.",
+    )
+    parser.add_argument(
         "--custom",
         action="store_true",
         help="Use the repository's custom Faster R-CNN implementation. Default uses torchvision detection.",
@@ -80,6 +86,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train_post_nms_top_n", type=int, default=300)
     parser.add_argument("--test_pre_nms_top_n", type=int, default=600)
     parser.add_argument("--test_post_nms_top_n", type=int, default=100)
+    parser.add_argument(
+        "--fixed_batch_shape",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="For the custom model, pad every resized batch to max_size x max_size to reduce CUDA allocator churn.",
+    )
+    parser.add_argument("--roi_dropout", type=float, default=0.0)
     parser.add_argument(
         "--lr_milestones",
         default="15,25",
@@ -723,7 +736,9 @@ def format_session_info(info: dict[str, Any]) -> str:
             f"├── Model",
             f"│   ├── implementation     : {'Custom' if hp['custom_model'] else 'Torchvision'}",
             f"│   ├── backbone           : {hp['backbone']}",
+            f"│   ├── trainable_layers   : {hp['trainable_backbone_layers']}",
             f"│   ├── pretrained_backbone: {hp['pretrained_backbone']}",
+            f"│   ├── roi_dropout        : {hp['roi_dropout']}",
             f"│   ├── min_size           : {hp['min_size']}",
             f"│   ├── max_size           : {hp['max_size']}",
             f"│   ├── anchor_sizes       : {hp['anchor_sizes'] or 'model_default'}",
@@ -731,7 +746,8 @@ def format_session_info(info: dict[str, Any]) -> str:
             f"│   ├── train_pre_nms_top_n : {hp['train_pre_nms_top_n']}",
             f"│   ├── train_post_nms_top_n: {hp['train_post_nms_top_n']}",
             f"│   ├── test_pre_nms_top_n  : {hp['test_pre_nms_top_n']}",
-            f"│   └── test_post_nms_top_n : {hp['test_post_nms_top_n']}",
+            f"│   ├── test_post_nms_top_n : {hp['test_post_nms_top_n']}",
+            f"│   └── fixed_batch_shape   : {hp['fixed_batch_shape']}",
             f"├── Validation",
             f"│   ├── score_threshold    : {hp['score_threshold']}",
             f"│   ├── eval_max_images    : {hp['eval_max_images'] or 'all'}",
@@ -782,6 +798,12 @@ def main() -> None:
         raise ValueError("--anchor_sizes must contain at least one value.")
     if not args.custom and anchor_sizes is not None and len(anchor_sizes) != 5:
         raise ValueError("--anchor_sizes must contain exactly 5 values when using torchvision Faster R-CNN.")
+    if args.custom and not 0 <= args.trainable_backbone_layers <= 3:
+        raise ValueError("--trainable_backbone_layers must be between 0 and 3 for the custom model.")
+    if not args.custom and not 0 <= args.trainable_backbone_layers <= 5:
+        raise ValueError("--trainable_backbone_layers must be between 0 and 5 for torchvision.")
+    if args.roi_dropout < 0 or args.roi_dropout >= 1:
+        raise ValueError("--roi_dropout must be in [0, 1).")
     custom_top_n_values = [
         args.train_pre_nms_top_n,
         args.train_post_nms_top_n,
@@ -857,6 +879,7 @@ def main() -> None:
         num_classes=len(train_dataset.classes) + 1,
         backbone_name=args.backbone,
         pretrained_backbone=args.pretrained_backbone,
+        trainable_backbone_layers=args.trainable_backbone_layers,
         min_size=args.min_size,
         max_size=args.max_size,
         anchor_sizes=anchor_sizes,
@@ -866,6 +889,8 @@ def main() -> None:
         train_post_nms_top_n=args.train_post_nms_top_n,
         test_pre_nms_top_n=args.test_pre_nms_top_n,
         test_post_nms_top_n=args.test_post_nms_top_n,
+        fixed_batch_shape=args.fixed_batch_shape,
+        roi_dropout=args.roi_dropout,
     ).to(device)
     if world_size > 1:
         model = DistributedDataParallel(model, device_ids=[device.index])
@@ -936,7 +961,9 @@ def main() -> None:
             "weight_decay": args.weight_decay,
             "score_threshold": args.score_threshold,
             "backbone": args.backbone,
+            "trainable_backbone_layers": args.trainable_backbone_layers,
             "custom_model": args.custom,
+            "roi_dropout": args.roi_dropout,
             "min_size": args.min_size,
             "max_size": args.max_size,
             "anchor_sizes": anchor_sizes,
@@ -945,6 +972,7 @@ def main() -> None:
             "train_post_nms_top_n": args.train_post_nms_top_n,
             "test_pre_nms_top_n": args.test_pre_nms_top_n,
             "test_post_nms_top_n": args.test_post_nms_top_n,
+            "fixed_batch_shape": args.fixed_batch_shape,
             "eval_max_images": args.eval_max_images,
             "full_coco_metrics_interval": args.full_coco_metrics_interval,
             "log_interval": args.log_interval,
@@ -1019,10 +1047,13 @@ def main() -> None:
         "backbone": args.backbone,
         "custom_model": args.custom,
         "custom_model_version": CUSTOM_MODEL_VERSION if args.custom else None,
+        "trainable_backbone_layers": args.trainable_backbone_layers,
+        "roi_dropout": args.roi_dropout,
         "min_size": args.min_size,
         "max_size": args.max_size,
         "anchor_sizes": anchor_sizes,
         "anchor_ratios": anchor_ratios,
+        "fixed_batch_shape": args.fixed_batch_shape,
     }
 
     for epoch in range(resume_epoch + 1, args.epochs + 1):

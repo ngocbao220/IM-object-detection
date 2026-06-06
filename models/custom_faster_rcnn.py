@@ -47,6 +47,8 @@ class CustomFasterRCNN(nn.Module):
         train_post_nms_top_n: int = 300,
         test_pre_nms_top_n: int = 600,
         test_post_nms_top_n: int = 100,
+        fixed_batch_shape: bool = False,
+        roi_dropout: float = 0.0,
     ) -> None:
         super().__init__()
         self.num_classes = num_classes
@@ -56,7 +58,11 @@ class CustomFasterRCNN(nn.Module):
         self.train_post_nms_top_n = train_post_nms_top_n
         self.test_pre_nms_top_n = test_pre_nms_top_n
         self.test_post_nms_top_n = test_post_nms_top_n
-        self.transform = DetectionModelTransform(min_size=min_size, max_size=max_size)
+        self.transform = DetectionModelTransform(
+            min_size=min_size,
+            max_size=max_size,
+            fixed_batch_shape=fixed_batch_shape,
+        )
         self.backbone = ResNetBackbone(
             backbone_name=backbone_name,
             pretrained_backbone=pretrained_backbone,
@@ -68,7 +74,7 @@ class CustomFasterRCNN(nn.Module):
         )
         self.rpn_head = RPNHead(self.backbone.out_channels, self.anchor_generator.num_anchors)
         self.roi_projection = nn.Conv2d(self.backbone.out_channels, roi_channels, kernel_size=1)
-        self.roi_head = ROIHead(roi_channels, num_classes)
+        self.roi_head = ROIHead(roi_channels, num_classes, dropout=roi_dropout)
         nn.init.normal_(self.roi_projection.weight, std=0.01)
         nn.init.constant_(self.roi_projection.bias, 0)
 

@@ -138,9 +138,18 @@ class RPNHead(nn.Module):
 
 
 class ROIHead(nn.Module):
-    def __init__(self, in_channels: int, num_classes: int, pool_size: int = 7) -> None:
+    def __init__(
+        self,
+        in_channels: int,
+        num_classes: int,
+        pool_size: int = 7,
+        dropout: float = 0.0,
+    ) -> None:
         super().__init__()
+        if dropout < 0 or dropout >= 1:
+            raise ValueError("dropout must be in [0, 1).")
         self.pool_size = pool_size
+        self.dropout = nn.Dropout(p=dropout) if dropout > 0 else nn.Identity()
         hidden = 1024
         self.fc1 = nn.Linear(in_channels * pool_size * pool_size, hidden)
         self.fc2 = nn.Linear(hidden, hidden)
@@ -199,7 +208,9 @@ class ROIHead(nn.Module):
             )
         x = pooled.flatten(start_dim=1)
         x = F.relu(self.fc1(x))
+        x = self.dropout(x)
         x = F.relu(self.fc2(x))
+        x = self.dropout(x)
         return self.cls_score(x), self.bbox_pred(x)
 
 

@@ -74,6 +74,8 @@ def create_custom_faster_rcnn(
     train_post_nms_top_n: int = 300,
     test_pre_nms_top_n: int = 600,
     test_post_nms_top_n: int = 100,
+    fixed_batch_shape: bool = False,
+    roi_dropout: float = 0.0,
 ) -> torch.nn.Module:
     return CustomFasterRCNN(
         num_classes=num_classes,
@@ -90,6 +92,8 @@ def create_custom_faster_rcnn(
         train_post_nms_top_n=train_post_nms_top_n,
         test_pre_nms_top_n=test_pre_nms_top_n,
         test_post_nms_top_n=test_post_nms_top_n,
+        fixed_batch_shape=fixed_batch_shape,
+        roi_dropout=roi_dropout,
     )
 
 
@@ -109,6 +113,8 @@ def create_faster_rcnn(
     train_post_nms_top_n: int = 300,
     test_pre_nms_top_n: int = 600,
     test_post_nms_top_n: int = 100,
+    fixed_batch_shape: bool = False,
+    roi_dropout: float = 0.0,
 ) -> torch.nn.Module:
     if custom:
         return create_custom_faster_rcnn(
@@ -126,6 +132,8 @@ def create_faster_rcnn(
             train_post_nms_top_n=train_post_nms_top_n,
             test_pre_nms_top_n=test_pre_nms_top_n,
             test_post_nms_top_n=test_post_nms_top_n,
+            fixed_batch_shape=fixed_batch_shape,
+            roi_dropout=roi_dropout,
         )
     return create_torchvision_faster_rcnn(
         num_classes=num_classes,

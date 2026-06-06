@@ -51,14 +51,17 @@ MODEL_IMPL="${MODEL_IMPL:-}"
 CUSTOM_MODEL="${CUSTOM_MODEL:-1}"
 BACKBONE="${BACKBONE:-resnet50}"
 PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
+TRAINABLE_BACKBONE_LAYERS="${TRAINABLE_BACKBONE_LAYERS:-2}"
 MIN_SIZE="${MIN_SIZE:-512}"
 MAX_SIZE="${MAX_SIZE:-768}"
+ROI_DROPOUT="${ROI_DROPOUT:-0.2}"
 ANCHOR_SIZES="${ANCHOR_SIZES:-}"
 ANCHOR_RATIOS="${ANCHOR_RATIOS:-}"
 TRAIN_PRE_NMS_TOP_N="${TRAIN_PRE_NMS_TOP_N:-1000}"
 TRAIN_POST_NMS_TOP_N="${TRAIN_POST_NMS_TOP_N:-300}"
 TEST_PRE_NMS_TOP_N="${TEST_PRE_NMS_TOP_N:-600}"
 TEST_POST_NMS_TOP_N="${TEST_POST_NMS_TOP_N:-100}"
+CUSTOM_FIXED_BATCH_SHAPE="${CUSTOM_FIXED_BATCH_SHAPE:-1}"
 
 # =========================
 # 4. Training Params
@@ -66,7 +69,9 @@ TEST_POST_NMS_TOP_N="${TEST_POST_NMS_TOP_N:-100}"
 EPOCHS="${EPOCHS:-50}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
-LR="${LR:-0.005}"
+LR="${LR:-0.001}"
+MOMENTUM="${MOMENTUM:-0.9}"
+WEIGHT_DECAY="${WEIGHT_DECAY:-0.001}"
 
 # LR_SCHEDULER accepts: multistep, cosine, plateau.
 LR_SCHEDULER="${LR_SCHEDULER:-plateau}"
@@ -83,9 +88,9 @@ EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-0.001}"
 # =========================
 # 5. Data Sampling/Augment
 # =========================
-AUGMENTATION="${AUGMENTATION:-0}"
+AUGMENTATION="${AUGMENTATION:-1}"
 HORIZONTAL_FLIP_PROBABILITY="${HORIZONTAL_FLIP_PROBABILITY:-0.5}"
-COLOR_JITTER_PROBABILITY="${COLOR_JITTER_PROBABILITY:-0.3}"
+COLOR_JITTER_PROBABILITY="${COLOR_JITTER_PROBABILITY:-0.2}"
 GRAYSCALE_PROBABILITY="${GRAYSCALE_PROBABILITY:-0.05}"
 
 OVERSAMPLE_CLASS="${OVERSAMPLE_CLASS:-}"
@@ -175,6 +180,8 @@ train() {
     --full_coco_metrics_interval "${FULL_COCO_METRICS_INTERVAL}"
     --empty_cache_interval "${EMPTY_CACHE_INTERVAL}"
     --lr "${LR}"
+    --momentum "${MOMENTUM}"
+    --weight_decay "${WEIGHT_DECAY}"
     --lr_scheduler "${LR_SCHEDULER}"
     --lr_milestones "${LR_MILESTONES}"
     --lr_gamma "${LR_GAMMA}"
@@ -183,8 +190,10 @@ train() {
     --plateau_factor "${PLATEAU_FACTOR}"
     --score_threshold "${SCORE_THRESHOLD}"
     --backbone "${BACKBONE}"
+    --trainable_backbone_layers "${TRAINABLE_BACKBONE_LAYERS}"
     --min_size "${MIN_SIZE}"
     --max_size "${MAX_SIZE}"
+    --roi_dropout "${ROI_DROPOUT}"
     --train_pre_nms_top_n "${TRAIN_PRE_NMS_TOP_N}"
     --train_post_nms_top_n "${TRAIN_POST_NMS_TOP_N}"
     --test_pre_nms_top_n "${TEST_PRE_NMS_TOP_N}"
@@ -213,6 +222,11 @@ train() {
 
   if [[ "${CUSTOM_MODEL}" == "1" ]]; then
     train_args+=(--custom)
+    if [[ "${CUSTOM_FIXED_BATCH_SHAPE}" == "1" ]]; then
+      train_args+=(--fixed_batch_shape)
+    else
+      train_args+=(--no-fixed_batch_shape)
+    fi
   fi
 
   if [[ -n "${ANCHOR_SIZES}" ]]; then

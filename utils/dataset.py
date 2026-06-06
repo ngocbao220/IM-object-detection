@@ -138,12 +138,20 @@ def resize_image_and_boxes(
 def pad_images(
     images: list[torch.Tensor],
     size_divisible: int = 16,
+    fixed_size: tuple[int, int] | None = None,
 ) -> tuple[torch.Tensor, list[tuple[int, int]]]:
     image_sizes = [(image.shape[-2], image.shape[-1]) for image in images]
-    max_height = max(size[0] for size in image_sizes)
-    max_width = max(size[1] for size in image_sizes)
-    max_height = int(math.ceil(max_height / size_divisible) * size_divisible)
-    max_width = int(math.ceil(max_width / size_divisible) * size_divisible)
+    if fixed_size is None:
+        max_height = max(size[0] for size in image_sizes)
+        max_width = max(size[1] for size in image_sizes)
+        max_height = int(math.ceil(max_height / size_divisible) * size_divisible)
+        max_width = int(math.ceil(max_width / size_divisible) * size_divisible)
+    else:
+        max_height, max_width = fixed_size
+        too_tall = any(height > max_height for height, _width in image_sizes)
+        too_wide = any(width > max_width for _height, width in image_sizes)
+        if too_tall or too_wide:
+            raise ValueError(f"fixed_size={fixed_size} is smaller than at least one resized image: {image_sizes}")
     batch = images[0].new_zeros((len(images), 3, max_height, max_width))
     for index, image in enumerate(images):
         _, height, width = image.shape
@@ -152,10 +160,17 @@ def pad_images(
 
 
 class DetectionModelTransform:
-    def __init__(self, min_size: int, max_size: int, size_divisible: int = 16) -> None:
+    def __init__(
+        self,
+        min_size: int,
+        max_size: int,
+        size_divisible: int = 16,
+        fixed_batch_shape: bool = False,
+    ) -> None:
         self.min_size = min_size
         self.max_size = max_size
         self.size_divisible = size_divisible
+        self.fixed_batch_shape = fixed_batch_shape
 
     def __call__(
         self,
@@ -191,7 +206,12 @@ class DetectionModelTransform:
                 target = {key: value for key, value in targets[index].items()}
                 target["boxes"] = resized_boxes
                 new_targets.append(target)
-        batch, _ = pad_images(normalized_images, size_divisible=self.size_divisible)
+        fixed_size = (self.max_size, self.max_size) if self.fixed_batch_shape else None
+        batch, _ = pad_images(
+            normalized_images,
+            size_divisible=self.size_divisible,
+            fixed_size=fixed_size,
+        )
         return batch, original_sizes, resized_sizes, scales, new_targets
 
 
