@@ -425,8 +425,6 @@ def assign_roi_targets(
             max_iou, matched_idx = ious.max(dim=1)
             labels_per_image = gt_labels[matched_idx]
             labels_per_image[max_iou < 0.5] = 0
-            ignore = (max_iou >= 0.0) & (max_iou < 0.1)
-            labels_per_image[ignore] = -1
             matched_gt = gt_boxes[matched_idx]
         sampling_labels = (labels_per_image > 0).float().where(
             labels_per_image >= 0,

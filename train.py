@@ -57,14 +57,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=0.005)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=0.0005)
-    parser.add_argument("--score_threshold", type=float, default=0.5)
     parser.add_argument(
-        "--eval_score_threshold",
+        "--grad_clip_norm",
         type=float,
-        dest="score_threshold",
-        default=argparse.SUPPRESS,
-        help="Alias for --score_threshold during validation metrics.",
+        default=0.0,
+        help="Clip gradient norm after backward. 0 disables clipping.",
     )
+    parser.add_argument("--score_threshold", type=float, default=0.5)
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
     parser.add_argument(
         "--trainable_backbone_layers",
@@ -156,6 +155,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizontal_flip_probability", type=float, default=0.5)
     parser.add_argument("--color_jitter_probability", type=float, default=0.3)
     parser.add_argument("--grayscale_probability", type=float, default=0.05)
+    parser.add_argument(
+        "--sampler_strategy",
+        choices=["none", "class_balanced", "class_small_balanced"],
+        default="none",
+        help="Training sampler strategy. class_small_balanced also boosts images containing small objects.",
+    )
+    parser.add_argument("--small_object_boost", type=float, default=1.5)
+    parser.add_argument("--small_object_threshold", type=float, default=0.01)
+    parser.add_argument("--empty_image_weight", type=float, default=0.5)
     parser.add_argument(
         "--oversample_class",
         default=None,
@@ -308,6 +316,7 @@ def train_one_epoch(
     is_main_process: bool = True,
     log_interval: int = 20,
     empty_cache_interval: int = 0,
+    grad_clip_norm: float = 0.0,
     log_callback: Callable[[str], None] | None = None,
 ) -> dict[str, float]:
     model.train()
@@ -323,6 +332,8 @@ def train_one_epoch(
         losses = sum(loss for loss in loss_dict.values())
 
         losses.backward()
+        if grad_clip_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
         optimizer.step()
 
         batch_logs = {"loss": float(losses.detach().cpu())}
@@ -591,30 +602,81 @@ def count_dataset_boxes(dataset: OdDataset) -> dict[str, Any]:
     }
 
 
-def build_class_oversampling_sampler(
+def build_training_sampler(
     dataset: OdDataset,
+    strategy: str,
     class_name: str | None,
     factor: float,
+    small_object_boost: float,
+    small_object_threshold: float,
+    empty_image_weight: float,
 ) -> tuple[WeightedRandomSampler | None, dict[str, Any]]:
-    if not class_name:
-        return None, {"enabled": False}
-    if class_name not in dataset.classes:
+    if strategy == "none" and not class_name:
+        return None, {"enabled": False, "strategy": "none"}
+    if strategy not in {"none", "class_balanced", "class_small_balanced"}:
+        raise ValueError("--sampler_strategy must be one of none, class_balanced, class_small_balanced.")
+    if class_name and class_name not in dataset.classes:
         raise ValueError(f"--oversample_class must be one of {dataset.classes}.")
     if factor < 1.0:
         raise ValueError("--oversample_factor must be greater than or equal to 1.0.")
+    if small_object_boost < 1.0:
+        raise ValueError("--small_object_boost must be greater than or equal to 1.0.")
+    if small_object_threshold < 0:
+        raise ValueError("--small_object_threshold must be greater than or equal to 0.")
+    if empty_image_weight < 0:
+        raise ValueError("--empty_image_weight must be greater than or equal to 0.")
 
-    weights = []
+    class_counts = Counter()
+    for annotations in dataset.annotations_by_image.values():
+        class_counts.update(ann["class"] for ann in annotations)
+    max_class_count = max(class_counts.values(), default=1)
+    class_weights = {
+        class_label: math.sqrt(max_class_count / max(count, 1))
+        for class_label, count in class_counts.items()
+    }
+
+    weights: list[float] = []
     num_target_images = 0
+    num_small_object_images = 0
+    num_empty_images = 0
     for image in dataset.images:
         image_id = image["id"]
-        has_target_class = any(
-            ann["class"] == class_name for ann in dataset.annotations_by_image.get(image_id, [])
-        )
+        annotations = dataset.annotations_by_image.get(image_id, [])
+        if not annotations:
+            num_empty_images += 1
+            weight = empty_image_weight
+            weights.append(weight)
+            continue
+
+        if strategy in {"class_balanced", "class_small_balanced"}:
+            weight = max(class_weights.get(ann["class"], 1.0) for ann in annotations)
+        else:
+            weight = 1.0
+
+        has_target_class = bool(class_name) and any(ann["class"] == class_name for ann in annotations)
         if has_target_class:
             num_target_images += 1
-        weights.append(factor if has_target_class else 1.0)
+            weight *= factor
 
-    if num_target_images == 0:
+        has_small_object = False
+        if strategy == "class_small_balanced":
+            image_width = float(image.get("width") or image.get("w") or 0)
+            image_height = float(image.get("height") or image.get("h") or 0)
+            image_area = image_width * image_height
+            if image_area > 0:
+                for ann in annotations:
+                    x1, y1, x2, y2 = [float(value) for value in ann["bbox"]]
+                    relative_area = max((x2 - x1) * (y2 - y1), 0.0) / image_area
+                    if relative_area < small_object_threshold:
+                        has_small_object = True
+                        break
+        if has_small_object:
+            num_small_object_images += 1
+            weight *= small_object_boost
+
+        weights.append(weight)
+
+    if class_name and num_target_images == 0:
         raise ValueError(f"No training images contain oversample class: {class_name}.")
 
     sampler = WeightedRandomSampler(
@@ -624,11 +686,20 @@ def build_class_oversampling_sampler(
     )
     return sampler, {
         "enabled": True,
+        "strategy": strategy,
         "class": class_name,
         "factor": factor,
         "target_images": num_target_images,
+        "small_object_boost": small_object_boost,
+        "small_object_threshold": small_object_threshold,
+        "small_object_images": num_small_object_images,
+        "empty_image_weight": empty_image_weight,
+        "empty_images": num_empty_images,
         "total_images": len(dataset),
         "target_image_ratio": num_target_images / max(len(dataset), 1),
+        "min_weight": float(min(weights, default=0.0)),
+        "max_weight": float(max(weights, default=0.0)),
+        "mean_weight": float(sum(weights) / max(len(weights), 1)),
     }
 
 
@@ -705,14 +776,18 @@ def format_session_info(info: dict[str, Any]) -> str:
         lines.append("Resume: disabled")
     if info["oversampling"]["enabled"]:
         lines.append(
-            "Oversampling: "
+            "Sampling: "
+            f"strategy={info['oversampling'].get('strategy', 'custom')}, "
             f"class={info['oversampling']['class']}, "
             f"factor={info['oversampling']['factor']}, "
             f"target_images={info['oversampling']['target_images']}/"
-            f"{info['oversampling']['total_images']}"
+            f"{info['oversampling']['total_images']}, "
+            f"small_object_images={info['oversampling'].get('small_object_images', 0)}, "
+            f"weight_range=[{info['oversampling'].get('min_weight', 0.0):.3f}, "
+            f"{info['oversampling'].get('max_weight', 0.0):.3f}]"
         )
     else:
-        lines.append("Oversampling: disabled")
+        lines.append("Sampling: disabled")
     lines.append(
         f"Model: {info['model']['implementation']} Faster R-CNN {info['model']['backbone']} "
         f"({info['model']['trainable_parameters']:,}/"
@@ -727,12 +802,16 @@ def format_session_info(info: dict[str, Any]) -> str:
             f"│   ├── batch_size         : {hp['batch_size']}",
             f"│   ├── num_workers        : {hp['num_workers']}",
             f"│   ├── augmentation       : {hp['augmentation']}",
+            f"│   ├── sampler_strategy   : {hp['sampler_strategy']}",
+            f"│   ├── small_object_boost : {hp['small_object_boost']}",
+            f"│   ├── empty_image_weight : {hp['empty_image_weight']}",
             f"│   ├── oversample_class   : {hp['oversample_class'] or 'disabled'}",
             f"│   └── oversample_factor  : {hp['oversample_factor']}",
             f"├── Optimizer",
             f"│   ├── lr                 : {hp['lr']}",
             f"│   ├── momentum           : {hp['momentum']}",
-            f"│   └── weight_decay       : {hp['weight_decay']}",
+            f"│   ├── weight_decay       : {hp['weight_decay']}",
+            f"│   └── grad_clip_norm     : {hp['grad_clip_norm'] or 'disabled'}",
             f"├── LR Scheduler",
             f"│   ├── type               : {hp['lr_scheduler']}",
             f"│   ├── milestones         : {hp['lr_milestones']}",
@@ -798,6 +877,8 @@ def main() -> None:
         raise ValueError("--full_coco_metrics_interval must be greater than or equal to 0.")
     if args.empty_cache_interval < 0:
         raise ValueError("--empty_cache_interval must be greater than or equal to 0.")
+    if args.grad_clip_norm < 0:
+        raise ValueError("--grad_clip_norm must be greater than or equal to 0.")
     lr_milestones = parse_lr_milestones(args.lr_milestones)
     anchor_sizes = parse_optional_int_tuple(args.anchor_sizes)
     anchor_ratios = parse_optional_float_tuple(args.anchor_ratios)
@@ -828,6 +909,12 @@ def main() -> None:
         raise ValueError("Augmentation probabilities must be between 0 and 1.")
     if args.oversample_factor < 1.0:
         raise ValueError("--oversample_factor must be greater than or equal to 1.0.")
+    if args.small_object_boost < 1.0:
+        raise ValueError("--small_object_boost must be greater than or equal to 1.0.")
+    if args.small_object_threshold < 0:
+        raise ValueError("--small_object_threshold must be greater than or equal to 0.")
+    if args.empty_image_weight < 0:
+        raise ValueError("--empty_image_weight must be greater than or equal to 0.")
     maybe_launch_distributed(args)
     device, rank, world_size = setup_device(args)
     is_main_process = rank == 0
@@ -854,10 +941,14 @@ def main() -> None:
     )
     train_dataset = OdDataset(args.train_data, args.image_dir, transforms=train_transforms)
     val_dataset = OdDataset(args.val_data, args.val_image_dir, classes=train_dataset.classes)
-    oversampling_sampler, oversampling_info = build_class_oversampling_sampler(
+    oversampling_sampler, oversampling_info = build_training_sampler(
         train_dataset,
+        args.sampler_strategy,
         args.oversample_class,
         args.oversample_factor,
+        args.small_object_boost,
+        args.small_object_threshold,
+        args.empty_image_weight,
     )
     if world_size > 1 and oversampling_sampler is not None:
         raise RuntimeError("--oversample_class is currently supported only for single-GPU training.")
@@ -966,6 +1057,7 @@ def main() -> None:
             "plateau_factor": args.plateau_factor,
             "momentum": args.momentum,
             "weight_decay": args.weight_decay,
+            "grad_clip_norm": args.grad_clip_norm,
             "score_threshold": args.score_threshold,
             "backbone": args.backbone,
             "trainable_backbone_layers": args.trainable_backbone_layers,
@@ -990,6 +1082,10 @@ def main() -> None:
             "horizontal_flip_probability": args.horizontal_flip_probability,
             "color_jitter_probability": args.color_jitter_probability,
             "grayscale_probability": args.grayscale_probability,
+            "sampler_strategy": args.sampler_strategy,
+            "small_object_boost": args.small_object_boost,
+            "small_object_threshold": args.small_object_threshold,
+            "empty_image_weight": args.empty_image_weight,
             "oversample_class": args.oversample_class,
             "oversample_factor": args.oversample_factor,
             "early_stopping": args.early_stopping,
@@ -1084,6 +1180,7 @@ def main() -> None:
             is_main_process,
             log_interval=args.log_interval,
             empty_cache_interval=args.empty_cache_interval,
+            grad_clip_norm=args.grad_clip_norm,
             log_callback=(
                 lambda message: append_session_log(text_log_path, message)
                 if is_main_process

@@ -9,6 +9,91 @@ from PIL import Image
 
 from utils.helper import load_json, load_classes, resolve_image_path
 
+
+def summarize_effective_class_distribution(
+    annotation_path: str | Path,
+    image_dir: str | Path,
+    sampler_strategy: str = "none",
+    oversample_class: str | None = None,
+    oversample_factor: float = 1.0,
+    small_object_boost: float = 1.5,
+    small_object_threshold: float = 0.01,
+    empty_image_weight: float = 0.5,
+) -> Any:
+    """Estimate per-class object counts after one epoch of weighted sampling.
+
+    Augmentation does not change class labels, so the effective class distribution
+    changes only through the image sampler. This function computes:
+    - original object count per class
+    - expected sampled object count per class in one epoch
+    - ratio between sampled/original
+    """
+    import pandas as pd
+
+    from train import build_training_sampler
+    from utils.dataset import OdDataset
+
+    dataset = OdDataset(annotation_path, image_dir)
+    sampler, sampler_info = build_training_sampler(
+        dataset=dataset,
+        strategy=sampler_strategy,
+        class_name=oversample_class,
+        factor=oversample_factor,
+        small_object_boost=small_object_boost,
+        small_object_threshold=small_object_threshold,
+        empty_image_weight=empty_image_weight,
+    )
+
+    original_counts = Counter()
+    expected_counts = Counter()
+    expected_image_hits = Counter()
+
+    if sampler is None:
+        for image in dataset.images:
+            image_id = image["id"]
+            annotations = dataset.annotations_by_image.get(image_id, [])
+            classes_in_image = set()
+            for ann in annotations:
+                class_name = ann["class"]
+                original_counts[class_name] += 1
+                expected_counts[class_name] += 1
+                classes_in_image.add(class_name)
+            for class_name in classes_in_image:
+                expected_image_hits[class_name] += 1
+    else:
+        weights = sampler.weights.detach().cpu().tolist()
+        total_weight = max(sum(weights), 1e-12)
+        num_draws = sampler.num_samples
+        for index, image in enumerate(dataset.images):
+            image_id = image["id"]
+            annotations = dataset.annotations_by_image.get(image_id, [])
+            draw_expectation = num_draws * (weights[index] / total_weight)
+            classes_in_image = set()
+            for ann in annotations:
+                class_name = ann["class"]
+                original_counts[class_name] += 1
+                expected_counts[class_name] += draw_expectation
+                classes_in_image.add(class_name)
+            for class_name in classes_in_image:
+                expected_image_hits[class_name] += draw_expectation
+
+    rows = []
+    for class_name in dataset.classes:
+        original = float(original_counts.get(class_name, 0))
+        expected = float(expected_counts.get(class_name, 0.0))
+        rows.append(
+            {
+                "class": class_name,
+                "original_objects": int(original),
+                "expected_sampled_objects": expected,
+                "sampling_ratio": expected / max(original, 1.0),
+                "expected_sampled_images": float(expected_image_hits.get(class_name, 0.0)),
+            }
+        )
+
+    table = pd.DataFrame(rows).sort_values("expected_sampled_objects", ascending=False).reset_index(drop=True)
+    return table, sampler_info
+
 def index_annotations(annotation: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     indexed: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for ann in annotation.get("annotations", []):
