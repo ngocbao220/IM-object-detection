@@ -58,6 +58,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=0.0005)
     parser.add_argument("--score_threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--eval_score_threshold",
+        type=float,
+        dest="score_threshold",
+        default=argparse.SUPPRESS,
+        help="Alias for --score_threshold during validation metrics.",
+    )
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
     parser.add_argument(
         "--trainable_backbone_layers",

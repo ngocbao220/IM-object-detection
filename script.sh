@@ -101,6 +101,7 @@ OVERSAMPLE_FACTOR="${OVERSAMPLE_FACTOR:-1.0}"
 # 6. Inference/Evaluation
 # =========================
 SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
+EVAL_SCORE_THRESHOLD="${EVAL_SCORE_THRESHOLD:-${SCORE_THRESHOLD}}"
 NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
 CONFIDENCE_THRESHOLDS="${CONFIDENCE_THRESHOLDS:-0.2,0.3,0.4,0.5,0.6,0.7}"
 NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
@@ -189,7 +190,7 @@ train() {
     --min_lr "${MIN_LR}"
     --plateau_patience "${PLATEAU_PATIENCE}"
     --plateau_factor "${PLATEAU_FACTOR}"
-    --score_threshold "${SCORE_THRESHOLD}"
+    --eval_score_threshold "${EVAL_SCORE_THRESHOLD}"
     --backbone "${BACKBONE}"
     --trainable_backbone_layers "${TRAINABLE_BACKBONE_LAYERS}"
     --min_size "${MIN_SIZE}"
