@@ -46,7 +46,7 @@ THRESHOLD_TUNING_OUTPUT="${THRESHOLD_TUNING_OUTPUT:-${RUN_RESULTS_DIR}/threshold
 # =========================
 # 3. Important Model Params
 # =========================
-# MODEL_IMPL accepts: torchvision, custom. CUSTOM_MODEL=0/1 is kept for compatibility.
+# MODEL_IMPL accepts: torchvision, custom, retina. CUSTOM_MODEL=0/1 is kept for compatibility.
 MODEL_IMPL="${MODEL_IMPL:-}"
 CUSTOM_MODEL="${CUSTOM_MODEL:-1}"
 BACKBONE="${BACKBONE:-resnet50}"
@@ -55,6 +55,8 @@ TRAINABLE_BACKBONE_LAYERS="${TRAINABLE_BACKBONE_LAYERS:-2}"
 MIN_SIZE="${MIN_SIZE:-512}"
 MAX_SIZE="${MAX_SIZE:-768}"
 ROI_DROPOUT="${ROI_DROPOUT:-0.2}"
+RETINA_TOPK_CANDIDATES="${RETINA_TOPK_CANDIDATES:-1000}"
+RETINA_MAX_DETECTIONS="${RETINA_MAX_DETECTIONS:-300}"
 # Empty anchor values use model defaults. Custom FPN default: sizes=32,64,128,256,512 and ratios=0.5,1.0,2.0.
 ANCHOR_SIZES="${ANCHOR_SIZES:-}"
 ANCHOR_RATIOS="${ANCHOR_RATIOS:-}"
@@ -147,8 +149,11 @@ if [[ -n "${MODEL_IMPL}" ]]; then
     torchvision)
       CUSTOM_MODEL=0
       ;;
+    retina)
+      CUSTOM_MODEL=0
+      ;;
     *)
-      echo "MODEL_IMPL must be either 'torchvision' or 'custom'. Got: ${MODEL_IMPL}"
+      echo "MODEL_IMPL must be one of 'torchvision', 'custom', 'retina'. Got: ${MODEL_IMPL}"
       exit 1
       ;;
   esac
@@ -178,6 +183,14 @@ download() {
 
 train() {
   resume_checkpoint="${RESUME_FROM}"
+  resolved_model_impl="${MODEL_IMPL}"
+  if [[ -z "${resolved_model_impl}" ]]; then
+    if [[ "${CUSTOM_MODEL}" == "1" ]]; then
+      resolved_model_impl="custom"
+    else
+      resolved_model_impl="torchvision"
+    fi
+  fi
   if [[ "${RESUME_LAST}" == "1" && -z "${resume_checkpoint}" ]]; then
     resume_checkpoint="${RUN_RESULTS_DIR}/checkpoints/last_model.pth"
   fi
@@ -206,11 +219,14 @@ train() {
     --plateau_patience "${PLATEAU_PATIENCE}"
     --plateau_factor "${PLATEAU_FACTOR}"
     --score_threshold "${SCORE_THRESHOLD}"
+    --model_impl "${resolved_model_impl}"
     --backbone "${BACKBONE}"
     --trainable_backbone_layers "${TRAINABLE_BACKBONE_LAYERS}"
     --min_size "${MIN_SIZE}"
     --max_size "${MAX_SIZE}"
     --roi_dropout "${ROI_DROPOUT}"
+    --retina_topk_candidates "${RETINA_TOPK_CANDIDATES}"
+    --retina_max_detections "${RETINA_MAX_DETECTIONS}"
     --train_pre_nms_top_n "${TRAIN_PRE_NMS_TOP_N}"
     --train_post_nms_top_n "${TRAIN_POST_NMS_TOP_N}"
     --test_pre_nms_top_n "${TEST_PRE_NMS_TOP_N}"
@@ -294,15 +310,26 @@ train() {
 }
 
 predict() {
+  resolved_model_impl="${MODEL_IMPL}"
+  if [[ -z "${resolved_model_impl}" ]]; then
+    if [[ "${CUSTOM_MODEL}" == "1" ]]; then
+      resolved_model_impl="custom"
+    else
+      resolved_model_impl="torchvision"
+    fi
+  fi
   predict_args=(
     --image_dir "${PREDICT_IMAGE_DIR}"
     --output "${PREDICTIONS_OUTPUT}"
     --checkpoint "${CHECKPOINT}"
     --score_threshold "${SCORE_THRESHOLD}"
     --nms_threshold "${NMS_THRESHOLD}"
+    --model_impl "${resolved_model_impl}"
     --backbone "${BACKBONE}"
     --min_size "${MIN_SIZE}"
     --max_size "${MAX_SIZE}"
+    --retina_topk_candidates "${RETINA_TOPK_CANDIDATES}"
+    --retina_max_detections "${RETINA_MAX_DETECTIONS}"
   )
 
   if [[ -n "${ANCHOR_SIZES}" ]]; then

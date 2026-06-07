@@ -12,7 +12,8 @@ from PIL import Image
 from torchvision.transforms import functional as F
 from tqdm.auto import tqdm
 
-from models.faster_rcnn import BACKBONE_WEIGHTS, create_faster_rcnn
+from models.factory import MODEL_IMPL_CHOICES, create_detection_model
+from models.modules import BACKBONE_WEIGHTS
 from utils.helper import get_device, load_checkpoint, load_classes, print_run_configuration
 
 
@@ -33,10 +34,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use the repository's custom Faster R-CNN implementation. Default uses torchvision detection.",
     )
+    parser.add_argument(
+        "--model_impl",
+        choices=MODEL_IMPL_CHOICES,
+        default="torchvision",
+        help="Detection model implementation to load.",
+    )
     parser.add_argument("--min_size", type=int, default=768)
     parser.add_argument("--max_size", type=int, default=1024)
     parser.add_argument("--anchor_sizes", default="", help="Optional comma-separated anchor sizes.")
     parser.add_argument("--anchor_ratios", default="", help="Optional comma-separated anchor aspect ratios.")
+    parser.add_argument("--retina_topk_candidates", type=int, default=1000)
+    parser.add_argument("--retina_max_detections", type=int, default=300)
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -117,6 +126,8 @@ def predict_images(
 
 def main() -> None:
     args = parse_args()
+    if args.custom:
+        args.model_impl = "custom"
     if args.min_size <= 0 or args.max_size <= 0 or args.min_size > args.max_size:
         raise ValueError("--min_size and --max_size must be positive with min_size <= max_size.")
     image_paths = list_images(args.image_dir)
@@ -130,8 +141,8 @@ def main() -> None:
         else {}
     )
     model_config = checkpoint_metadata.get("model_config", {})
+    model_impl = model_config.get("model_impl", args.model_impl)
     backbone = model_config.get("backbone", args.backbone)
-    custom_model = bool(model_config.get("custom_model", args.custom))
     min_size = int(model_config.get("min_size", args.min_size))
     max_size = int(model_config.get("max_size", args.max_size))
     anchor_sizes = model_config.get("anchor_sizes") or parse_optional_int_tuple(args.anchor_sizes)
@@ -151,8 +162,9 @@ def main() -> None:
             "device": device,
             "score_threshold": args.score_threshold,
             "nms_threshold": args.nms_threshold,
-            "model": f"{'Custom' if custom_model else 'Torchvision'} Faster R-CNN {backbone}",
-            "custom_model": custom_model,
+            "model": f"{model_impl} {backbone}",
+            "custom_model": model_impl == "custom",
+            "model_impl": model_impl,
             "min_size": min_size,
             "max_size": max_size,
             "anchor_sizes": anchor_sizes or "model_default",
@@ -161,16 +173,26 @@ def main() -> None:
         },
     )
 
-    model = create_faster_rcnn(
+    model = create_detection_model(
+        model_impl=model_impl,
         num_classes=len(classes) + 1,
         backbone_name=backbone,
+        pretrained_backbone=False,
+        trainable_backbone_layers=int(model_config.get("trainable_backbone_layers", 2)),
         box_score_thresh=args.score_threshold,
         box_nms_thresh=args.nms_threshold,
         min_size=min_size,
         max_size=max_size,
         anchor_sizes=anchor_sizes,
         anchor_ratios=anchor_ratios,
-        custom=custom_model,
+        train_pre_nms_top_n=2000,
+        train_post_nms_top_n=2000,
+        test_pre_nms_top_n=1000,
+        test_post_nms_top_n=1000,
+        fixed_batch_shape=bool(model_config.get("fixed_batch_shape", False)),
+        roi_dropout=float(model_config.get("roi_dropout", 0.0)),
+        retina_topk_candidates=int(model_config.get("retina_topk_candidates", args.retina_topk_candidates)),
+        retina_max_detections=int(model_config.get("retina_max_detections", args.retina_max_detections)),
     ).to(device)
     if checkpoint_path.exists():
         checkpoint = load_checkpoint(checkpoint_path, model, device)

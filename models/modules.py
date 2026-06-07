@@ -302,6 +302,79 @@ class ROIHead(nn.Module):
         return self.cls_score(x), self.bbox_pred(x)
 
 
+class RetinaClassificationHead(nn.Module):
+    def __init__(self, in_channels: int, num_anchors: int, num_classes: int, num_convs: int = 4) -> None:
+        super().__init__()
+        layers = []
+        for _ in range(num_convs):
+            conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+            nn.init.normal_(conv.weight, std=0.01)
+            nn.init.constant_(conv.bias, 0)
+            layers.extend([conv, nn.ReLU()])
+        self.conv = nn.Sequential(*layers)
+        self.cls_logits = nn.Conv2d(in_channels, num_anchors * num_classes, kernel_size=3, stride=1, padding=1)
+        nn.init.normal_(self.cls_logits.weight, std=0.01)
+        prior_probability = 0.01
+        nn.init.constant_(self.cls_logits.bias, -math.log((1 - prior_probability) / prior_probability))
+        self.num_classes = num_classes
+
+    def forward(self, features: OrderedDict[str, torch.Tensor]) -> torch.Tensor:
+        outputs = []
+        for feature in features.values():
+            logits = self.cls_logits(self.conv(feature))
+            batch_size, _, height, width = logits.shape
+            logits = logits.view(batch_size, -1, self.num_classes, height, width)
+            logits = logits.permute(0, 3, 4, 1, 2).reshape(batch_size, -1, self.num_classes)
+            outputs.append(logits)
+        return torch.cat(outputs, dim=1)
+
+
+class RetinaRegressionHead(nn.Module):
+    def __init__(self, in_channels: int, num_anchors: int, num_convs: int = 4) -> None:
+        super().__init__()
+        layers = []
+        for _ in range(num_convs):
+            conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+            nn.init.normal_(conv.weight, std=0.01)
+            nn.init.constant_(conv.bias, 0)
+            layers.extend([conv, nn.ReLU()])
+        self.conv = nn.Sequential(*layers)
+        self.bbox_reg = nn.Conv2d(in_channels, num_anchors * 4, kernel_size=3, stride=1, padding=1)
+        nn.init.normal_(self.bbox_reg.weight, std=0.01)
+        nn.init.constant_(self.bbox_reg.bias, 0)
+
+    def forward(self, features: OrderedDict[str, torch.Tensor]) -> torch.Tensor:
+        outputs = []
+        for feature in features.values():
+            bbox_reg = self.bbox_reg(self.conv(feature))
+            batch_size, _, height, width = bbox_reg.shape
+            bbox_reg = bbox_reg.view(batch_size, -1, 4, height, width)
+            bbox_reg = bbox_reg.permute(0, 3, 4, 1, 2).reshape(batch_size, -1, 4)
+            outputs.append(bbox_reg)
+        return torch.cat(outputs, dim=1)
+
+
+def sigmoid_focal_loss(
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2.0,
+    reduction: str = "sum",
+) -> torch.Tensor:
+    prob = inputs.sigmoid()
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = prob * targets + (1 - prob) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+    if reduction == "mean":
+        return loss.mean()
+    if reduction == "sum":
+        return loss.sum()
+    return loss
+
+
 def sample_labels(labels: torch.Tensor, batch_size: int, positive_fraction: float) -> torch.Tensor:
     positive = torch.where(labels == 1)[0]
     negative = torch.where(labels == 0)[0]

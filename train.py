@@ -26,7 +26,8 @@ try:
 except ImportError:  # pragma: no cover
     wandb = None
 
-from models.faster_rcnn import BACKBONE_WEIGHTS, CUSTOM_MODEL_VERSION, create_faster_rcnn
+from models.factory import MODEL_IMPL_CHOICES, create_detection_model, model_version_for_impl
+from models.modules import BACKBONE_WEIGHTS
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
 from utils.helper import (
     get_device,
@@ -76,6 +77,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use the repository's custom Faster R-CNN implementation. Default uses torchvision detection.",
     )
+    parser.add_argument(
+        "--model_impl",
+        choices=MODEL_IMPL_CHOICES,
+        default="torchvision",
+        help="Detection model implementation to train.",
+    )
     parser.add_argument("--min_size", type=int, default=768)
     parser.add_argument("--max_size", type=int, default=1024)
     parser.add_argument(
@@ -99,6 +106,8 @@ def parse_args() -> argparse.Namespace:
         help="For the custom model, pad every resized batch to max_size x max_size to reduce CUDA allocator churn.",
     )
     parser.add_argument("--roi_dropout", type=float, default=0.0)
+    parser.add_argument("--retina_topk_candidates", type=int, default=1000)
+    parser.add_argument("--retina_max_detections", type=int, default=300)
     parser.add_argument(
         "--lr_milestones",
         default="15,25",
@@ -799,7 +808,7 @@ def format_session_info(info: dict[str, Any]) -> str:
     else:
         lines.append("Sampling: disabled")
     lines.append(
-        f"Model: {info['model']['implementation']} Faster R-CNN {info['model']['backbone']} "
+        f"Model: {info['model']['implementation']} {info['model']['backbone']} "
         f"({info['model']['trainable_parameters']:,}/"
         f"{info['model']['total_parameters']:,} trainable/total params)"
     )
@@ -842,11 +851,13 @@ def format_session_info(info: dict[str, Any]) -> str:
             f"│   ├── plateau_patience   : {hp['plateau_patience']}",
             f"│   └── plateau_factor     : {hp['plateau_factor']}",
             f"├── Model",
-            f"│   ├── implementation     : {'Custom' if hp['custom_model'] else 'Torchvision'}",
+            f"│   ├── implementation     : {hp['model_impl']}",
             f"│   ├── backbone           : {hp['backbone']}",
             f"│   ├── trainable_layers   : {hp['trainable_backbone_layers']}",
             f"│   ├── pretrained_backbone: {hp['pretrained_backbone']}",
             f"│   ├── roi_dropout        : {hp['roi_dropout']}",
+            f"│   ├── retina_topk       : {hp['retina_topk_candidates']}",
+            f"│   ├── retina_max_det    : {hp['retina_max_detections']}",
             f"│   ├── min_size           : {hp['min_size']}",
             f"│   ├── max_size           : {hp['max_size']}",
             f"│   ├── anchor_sizes       : {hp['anchor_sizes'] or 'model_default'}",
@@ -881,6 +892,8 @@ def format_session_info(info: dict[str, Any]) -> str:
 
 def main() -> None:
     args = parse_args()
+    if args.custom:
+        args.model_impl = "custom"
     if args.log_interval <= 0:
         raise ValueError("--log_interval must be greater than 0.")
     if args.early_stopping_patience <= 0:
@@ -908,12 +921,18 @@ def main() -> None:
         raise ValueError("--anchor_sizes must contain at least one value.")
     if anchor_sizes is not None and len(anchor_sizes) != 5:
         raise ValueError("--anchor_sizes must contain exactly 5 values for the FPN levels.")
-    if args.custom and not 0 <= args.trainable_backbone_layers <= 4:
+    if args.model_impl == "custom" and not 0 <= args.trainable_backbone_layers <= 4:
         raise ValueError("--trainable_backbone_layers must be between 0 and 4 for the custom model.")
-    if not args.custom and not 0 <= args.trainable_backbone_layers <= 5:
+    if args.model_impl == "torchvision" and not 0 <= args.trainable_backbone_layers <= 5:
         raise ValueError("--trainable_backbone_layers must be between 0 and 5 for torchvision.")
+    if args.model_impl == "retina" and not 0 <= args.trainable_backbone_layers <= 4:
+        raise ValueError("--trainable_backbone_layers must be between 0 and 4 for RetinaNet.")
     if args.roi_dropout < 0 or args.roi_dropout >= 1:
         raise ValueError("--roi_dropout must be in [0, 1).")
+    if args.retina_topk_candidates <= 0:
+        raise ValueError("--retina_topk_candidates must be positive.")
+    if args.retina_max_detections <= 0:
+        raise ValueError("--retina_max_detections must be positive.")
     custom_top_n_values = [
         args.train_pre_nms_top_n,
         args.train_post_nms_top_n,
@@ -1019,7 +1038,8 @@ def main() -> None:
         collate_fn=collate_fn,
     )
 
-    model = create_faster_rcnn(
+    model = create_detection_model(
+        model_impl=args.model_impl,
         num_classes=len(train_dataset.classes) + 1,
         backbone_name=args.backbone,
         pretrained_backbone=args.pretrained_backbone,
@@ -1028,13 +1048,16 @@ def main() -> None:
         max_size=args.max_size,
         anchor_sizes=anchor_sizes,
         anchor_ratios=anchor_ratios,
-        custom=args.custom,
         train_pre_nms_top_n=args.train_pre_nms_top_n,
         train_post_nms_top_n=args.train_post_nms_top_n,
         test_pre_nms_top_n=args.test_pre_nms_top_n,
         test_post_nms_top_n=args.test_post_nms_top_n,
         fixed_batch_shape=args.fixed_batch_shape,
         roi_dropout=args.roi_dropout,
+        box_score_thresh=args.score_threshold,
+        box_nms_thresh=0.5,
+        retina_topk_candidates=args.retina_topk_candidates,
+        retina_max_detections=args.retina_max_detections,
     ).to(device)
     if world_size > 1:
         model = DistributedDataParallel(model, device_ids=[device.index])
@@ -1087,7 +1110,7 @@ def main() -> None:
         "distributed": {"world_size": world_size, "rank": rank, "gpus": args.gpus},
         "model": {
             "backbone": args.backbone,
-            "implementation": "Custom" if args.custom else "Torchvision",
+            "implementation": args.model_impl,
             **count_parameters(model),
         },
         "hyperparameters": {
@@ -1107,8 +1130,11 @@ def main() -> None:
             "score_threshold": args.score_threshold,
             "backbone": args.backbone,
             "trainable_backbone_layers": args.trainable_backbone_layers,
-            "custom_model": args.custom,
+            "custom_model": args.model_impl == "custom",
+            "model_impl": args.model_impl,
             "roi_dropout": args.roi_dropout,
+            "retina_topk_candidates": args.retina_topk_candidates,
+            "retina_max_detections": args.retina_max_detections,
             "min_size": args.min_size,
             "max_size": args.max_size,
             "anchor_sizes": anchor_sizes,
@@ -1203,11 +1229,14 @@ def main() -> None:
             )
     epochs_without_improvement = 0
     model_config = {
+        "model_impl": args.model_impl,
         "backbone": args.backbone,
-        "custom_model": args.custom,
-        "custom_model_version": CUSTOM_MODEL_VERSION if args.custom else None,
+        "custom_model": args.model_impl == "custom",
+        "custom_model_version": model_version_for_impl(args.model_impl),
         "trainable_backbone_layers": args.trainable_backbone_layers,
         "roi_dropout": args.roi_dropout,
+        "retina_topk_candidates": args.retina_topk_candidates,
+        "retina_max_detections": args.retina_max_detections,
         "min_size": args.min_size,
         "max_size": args.max_size,
         "anchor_sizes": anchor_sizes,
