@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from models.modules import (
     CustomAnchorGenerator,
+    FeaturePyramidNetwork,
     ROIHead,
     RPNHead,
     ResNetBackbone,
@@ -26,7 +27,7 @@ from utils.dataset import DetectionModelTransform
 from utils.helper import clip_boxes_to_image, decode_boxes, remove_small_boxes
 
 
-CUSTOM_MODEL_VERSION = 4
+CUSTOM_MODEL_VERSION = 5
 
 
 class CustomFasterRCNN(nn.Module):
@@ -68,15 +69,25 @@ class CustomFasterRCNN(nn.Module):
             pretrained_backbone=pretrained_backbone,
             trainable_backbone_layers=trainable_backbone_layers,
         )
+        self.fpn = FeaturePyramidNetwork(self.backbone.out_channels, out_channels=roi_channels)
         self.anchor_generator = CustomAnchorGenerator(
-            sizes=anchor_sizes or (64, 128, 192, 256, 512),
-            ratios=anchor_ratios or (0.33, 0.5, 1.0, 2.0),
+            sizes=anchor_sizes or (32, 64, 128, 256, 512),
+            ratios=anchor_ratios or (0.5, 1.0, 2.0),
         )
-        self.rpn_head = RPNHead(self.backbone.out_channels, self.anchor_generator.num_anchors)
-        self.roi_projection = nn.Conv2d(self.backbone.out_channels, roi_channels, kernel_size=1)
+        self.rpn_head = RPNHead(roi_channels, self.anchor_generator.num_anchors)
         self.roi_head = ROIHead(roi_channels, num_classes, dropout=roi_dropout)
-        nn.init.normal_(self.roi_projection.weight, std=0.01)
-        nn.init.constant_(self.roi_projection.bias, 0)
+
+    def rpn_forward(
+        self,
+        features: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        objectness_per_level = []
+        bbox_deltas_per_level = []
+        for feature in features.values():
+            objectness, bbox_deltas = self.rpn_head(feature)
+            objectness_per_level.append(objectness)
+            bbox_deltas_per_level.append(bbox_deltas)
+        return torch.cat(objectness_per_level, dim=1), torch.cat(bbox_deltas_per_level, dim=1)
 
     def postprocess_detections(
         self,
@@ -144,9 +155,9 @@ class CustomFasterRCNN(nn.Module):
             raise ValueError("targets are required in training mode.")
 
         batch, original_sizes, resized_sizes, _scales, resized_targets = self.transform(images, targets)
-        feature = self.backbone(batch)
-        objectness, pred_bbox_deltas = self.rpn_head(feature)
-        anchors = self.anchor_generator(feature, batch.shape[-2:])
+        features = self.fpn(self.backbone(batch))
+        objectness, pred_bbox_deltas = self.rpn_forward(features)
+        anchors = self.anchor_generator(features, batch.shape[-2:])
         with torch.no_grad():
             proposals = generate_proposals(
                 objectness.detach(),
@@ -156,8 +167,6 @@ class CustomFasterRCNN(nn.Module):
                 pre_nms_top_n=self.train_pre_nms_top_n if self.training else self.test_pre_nms_top_n,
                 post_nms_top_n=self.train_post_nms_top_n if self.training else self.test_post_nms_top_n,
             )
-        roi_feature = F.relu(self.roi_projection(feature))
-
         if self.training:
             assert resized_targets is not None
             loss_objectness, loss_rpn_box_reg = rpn_losses(
@@ -168,7 +177,7 @@ class CustomFasterRCNN(nn.Module):
                 resized_sizes,
             )
             sampled_proposals, labels, regression_targets = assign_roi_targets(proposals, resized_targets)
-            class_logits, box_regression = self.roi_head(roi_feature, sampled_proposals, resized_sizes)
+            class_logits, box_regression = self.roi_head(features, sampled_proposals, resized_sizes)
             loss_classifier, loss_box_reg = roi_losses(
                 class_logits,
                 box_regression,
@@ -183,5 +192,5 @@ class CustomFasterRCNN(nn.Module):
                 "loss_rpn_box_reg": loss_rpn_box_reg,
             }
 
-        class_logits, box_regression = self.roi_head(roi_feature, proposals, resized_sizes)
+        class_logits, box_regression = self.roi_head(features, proposals, resized_sizes)
         return self.postprocess_detections(class_logits, box_regression, proposals, resized_sizes, original_sizes)

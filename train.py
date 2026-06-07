@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
         "--trainable_backbone_layers",
         type=int,
         default=3,
-        help="Number of trainable ResNet stages. Custom model supports 0-3; torchvision supports 0-5.",
+        help="Number of trainable ResNet stages. Custom model supports 0-4; torchvision supports 0-5.",
     )
     parser.add_argument(
         "--custom",
@@ -796,10 +796,10 @@ def main() -> None:
     anchor_ratios = parse_optional_float_tuple(args.anchor_ratios)
     if anchor_sizes is not None and not anchor_sizes:
         raise ValueError("--anchor_sizes must contain at least one value.")
-    if not args.custom and anchor_sizes is not None and len(anchor_sizes) != 5:
-        raise ValueError("--anchor_sizes must contain exactly 5 values when using torchvision Faster R-CNN.")
-    if args.custom and not 0 <= args.trainable_backbone_layers <= 3:
-        raise ValueError("--trainable_backbone_layers must be between 0 and 3 for the custom model.")
+    if anchor_sizes is not None and len(anchor_sizes) != 5:
+        raise ValueError("--anchor_sizes must contain exactly 5 values for the FPN levels.")
+    if args.custom and not 0 <= args.trainable_backbone_layers <= 4:
+        raise ValueError("--trainable_backbone_layers must be between 0 and 4 for the custom model.")
     if not args.custom and not 0 <= args.trainable_backbone_layers <= 5:
         raise ValueError("--trainable_backbone_layers must be between 0 and 5 for torchvision.")
     if args.roi_dropout < 0 or args.roi_dropout >= 1:
