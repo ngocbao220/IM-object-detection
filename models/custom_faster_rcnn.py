@@ -44,10 +44,10 @@ class CustomFasterRCNN(nn.Module):
         box_score_thresh: float = 0.05,
         box_nms_thresh: float = 0.5,
         roi_channels: int = 256,
-        train_pre_nms_top_n: int = 1000,
-        train_post_nms_top_n: int = 300,
-        test_pre_nms_top_n: int = 600,
-        test_post_nms_top_n: int = 100,
+        train_pre_nms_top_n: int = 2000,
+        train_post_nms_top_n: int = 2000,
+        test_pre_nms_top_n: int = 1000,
+        test_post_nms_top_n: int = 1000,
         fixed_batch_shape: bool = False,
         roi_dropout: float = 0.0,
     ) -> None:
@@ -158,6 +158,10 @@ class CustomFasterRCNN(nn.Module):
         features = self.fpn(self.backbone(batch))
         objectness, pred_bbox_deltas = self.rpn_forward(features)
         anchors = self.anchor_generator(features, batch.shape[-2:])
+        num_anchors_per_level = [
+            feature.shape[-2] * feature.shape[-1] * self.anchor_generator.num_anchors
+            for feature in features.values()
+        ]
         with torch.no_grad():
             proposals = generate_proposals(
                 objectness.detach(),
@@ -166,6 +170,7 @@ class CustomFasterRCNN(nn.Module):
                 resized_sizes,
                 pre_nms_top_n=self.train_pre_nms_top_n if self.training else self.test_pre_nms_top_n,
                 post_nms_top_n=self.train_post_nms_top_n if self.training else self.test_post_nms_top_n,
+                num_anchors_per_level=num_anchors_per_level,
             )
         if self.training:
             assert resized_targets is not None

@@ -95,17 +95,175 @@ class RandomGrayscale:
         return image, target
 
 
+def clip_boxes_to_image(boxes: torch.Tensor, height: int, width: int) -> torch.Tensor:
+    boxes = boxes.clone()
+    boxes[:, 0::2] = boxes[:, 0::2].clamp(min=0, max=width)
+    boxes[:, 1::2] = boxes[:, 1::2].clamp(min=0, max=height)
+    return boxes
+
+
+def filter_boxes_by_size(boxes: torch.Tensor, min_size: float = 2.0) -> torch.Tensor:
+    widths = boxes[:, 2] - boxes[:, 0]
+    heights = boxes[:, 3] - boxes[:, 1]
+    return (widths >= min_size) & (heights >= min_size)
+
+
+class RandomScaleJitter:
+    def __init__(
+        self,
+        probability: float = 0.5,
+        min_scale: float = 0.85,
+        max_scale: float = 1.15,
+    ) -> None:
+        self.probability = probability
+        self.min_scale = min_scale
+        self.max_scale = max_scale
+
+    def __call__(
+        self, image: torch.Tensor, target: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if random.random() >= self.probability:
+            return image, target
+        scale = random.uniform(self.min_scale, self.max_scale)
+        _, height, width = image.shape
+        new_height = max(8, int(round(height * scale)))
+        new_width = max(8, int(round(width * scale)))
+        image = torch_F.interpolate(
+            image.unsqueeze(0),
+            size=(new_height, new_width),
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(0)
+        boxes = target["boxes"].clone()
+        if boxes.numel():
+            boxes *= scale
+            target["boxes"] = boxes
+            target["area"] = target["area"] * (scale * scale)
+        return image, target
+
+
+class RandomSafeCrop:
+    def __init__(
+        self,
+        probability: float = 0.2,
+        min_crop_scale: float = 0.7,
+        min_box_visibility: float = 0.5,
+        attempts: int = 10,
+    ) -> None:
+        self.probability = probability
+        self.min_crop_scale = min_crop_scale
+        self.min_box_visibility = min_box_visibility
+        self.attempts = attempts
+
+    def __call__(
+        self, image: torch.Tensor, target: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        boxes = target["boxes"]
+        if random.random() >= self.probability or boxes.numel() == 0:
+            return image, target
+
+        _, height, width = image.shape
+        original_boxes = boxes.clone()
+        original_areas = ((original_boxes[:, 2] - original_boxes[:, 0]) * (original_boxes[:, 3] - original_boxes[:, 1])).clamp(min=1e-6)
+
+        for _ in range(self.attempts):
+            crop_h = random.randint(max(8, int(height * self.min_crop_scale)), height)
+            crop_w = random.randint(max(8, int(width * self.min_crop_scale)), width)
+            max_top = height - crop_h
+            max_left = width - crop_w
+            top = 0 if max_top <= 0 else random.randint(0, max_top)
+            left = 0 if max_left <= 0 else random.randint(0, max_left)
+
+            cropped_boxes = original_boxes.clone()
+            cropped_boxes[:, 0::2] -= left
+            cropped_boxes[:, 1::2] -= top
+            cropped_boxes = clip_boxes_to_image(cropped_boxes, crop_h, crop_w)
+            keep = filter_boxes_by_size(cropped_boxes, min_size=2.0)
+            if not keep.any():
+                continue
+
+            cropped_boxes = cropped_boxes[keep]
+            kept_labels = target["labels"][keep]
+            kept_iscrowd = target["iscrowd"][keep]
+            visible_areas = ((cropped_boxes[:, 2] - cropped_boxes[:, 0]) * (cropped_boxes[:, 3] - cropped_boxes[:, 1])).clamp(min=0.0)
+            visibility = visible_areas / original_areas[keep]
+            visible_keep = visibility >= self.min_box_visibility
+            if not visible_keep.any():
+                continue
+
+            cropped_boxes = cropped_boxes[visible_keep]
+            kept_labels = kept_labels[visible_keep]
+            kept_iscrowd = kept_iscrowd[visible_keep]
+            visible_areas = visible_areas[visible_keep]
+
+            image = F.crop(image, top=top, left=left, height=crop_h, width=crop_w)
+            target["boxes"] = cropped_boxes
+            target["labels"] = kept_labels
+            target["iscrowd"] = kept_iscrowd
+            target["area"] = visible_areas
+            return image, target
+
+        return image, target
+
+
+class RandomGaussianBlur:
+    def __init__(
+        self,
+        probability: float = 0.1,
+        kernel_size: int = 5,
+        sigma: tuple[float, float] = (0.1, 1.5),
+    ) -> None:
+        self.probability = probability
+        self.kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
+        self.sigma = sigma
+
+    def __call__(
+        self, image: torch.Tensor, target: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if random.random() < self.probability:
+            sigma = random.uniform(self.sigma[0], self.sigma[1])
+            image = F.gaussian_blur(image, kernel_size=[self.kernel_size, self.kernel_size], sigma=[sigma, sigma])
+        return image, target
+
+
+class RandomGaussianNoise:
+    def __init__(self, probability: float = 0.1, std: float = 0.02) -> None:
+        self.probability = probability
+        self.std = std
+
+    def __call__(
+        self, image: torch.Tensor, target: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if random.random() < self.probability:
+            image = (image + torch.randn_like(image) * self.std).clamp(0.0, 1.0)
+        return image, target
+
+
 def build_train_transforms(
     horizontal_flip_probability: float = 0.5,
     color_jitter_probability: float = 0.3,
     grayscale_probability: float = 0.05,
+    scale_jitter_probability: float = 0.4,
+    scale_jitter_min: float = 0.85,
+    scale_jitter_max: float = 1.15,
+    safe_crop_probability: float = 0.2,
+    safe_crop_min_scale: float = 0.7,
+    safe_crop_min_visibility: float = 0.5,
+    blur_probability: float = 0.1,
+    blur_kernel_size: int = 5,
+    noise_probability: float = 0.1,
+    noise_std: float = 0.02,
 ) -> DetectionCompose:
     """Build conservative augmentations that preserve detection boxes."""
     return DetectionCompose(
         [
             RandomHorizontalFlip(horizontal_flip_probability),
+            RandomScaleJitter(scale_jitter_probability, scale_jitter_min, scale_jitter_max),
+            RandomSafeCrop(safe_crop_probability, safe_crop_min_scale, safe_crop_min_visibility),
             RandomColorJitter(color_jitter_probability),
             RandomGrayscale(grayscale_probability),
+            RandomGaussianBlur(blur_probability, blur_kernel_size),
+            RandomGaussianNoise(noise_probability, noise_std),
         ]
     )
 

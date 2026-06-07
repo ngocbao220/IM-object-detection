@@ -385,13 +385,30 @@ def generate_proposals(
     pre_nms_top_n: int,
     post_nms_top_n: int,
     nms_threshold: float = 0.7,
+    num_anchors_per_level: list[int] | None = None,
 ) -> list[torch.Tensor]:
     proposals = []
     for image_index, image_size in enumerate(image_sizes):
         scores = objectness[image_index].sigmoid()
-        num_top = min(pre_nms_top_n, scores.numel())
-        top_scores, top_idx = scores.topk(num_top)
-        boxes = decode_boxes(pred_bbox_deltas[image_index][top_idx], anchors[top_idx])
+        deltas = pred_bbox_deltas[image_index]
+        if num_anchors_per_level is None:
+            num_top = min(pre_nms_top_n, scores.numel())
+            top_scores, top_idx = scores.topk(num_top)
+            boxes = decode_boxes(deltas[top_idx], anchors[top_idx])
+        else:
+            score_levels = scores.split(num_anchors_per_level, dim=0)
+            delta_levels = deltas.split(num_anchors_per_level, dim=0)
+            anchor_levels = anchors.split(num_anchors_per_level, dim=0)
+            top_scores_per_level = []
+            boxes_per_level = []
+            for scores_level, deltas_level, anchors_level in zip(score_levels, delta_levels, anchor_levels):
+                num_top = min(pre_nms_top_n, scores_level.numel())
+                scores_top, top_idx = scores_level.topk(num_top)
+                boxes_top = decode_boxes(deltas_level[top_idx], anchors_level[top_idx])
+                top_scores_per_level.append(scores_top)
+                boxes_per_level.append(boxes_top)
+            top_scores = torch.cat(top_scores_per_level, dim=0)
+            boxes = torch.cat(boxes_per_level, dim=0)
         boxes = clip_boxes_to_image(boxes, image_size)
         keep = remove_small_boxes(boxes, min_size=2)
         boxes, top_scores = boxes[keep], top_scores[keep]
@@ -403,7 +420,7 @@ def generate_proposals(
 def assign_roi_targets(
     proposals: list[torch.Tensor],
     targets: list[dict[str, torch.Tensor]],
-    batch_size: int = 128,
+    batch_size: int = 512,
     positive_fraction: float = 0.25,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
     sampled_proposals = []

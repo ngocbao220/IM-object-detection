@@ -88,10 +88,10 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional comma-separated anchor aspect ratios, e.g. 0.33,0.5,1.0,2.0.",
     )
-    parser.add_argument("--train_pre_nms_top_n", type=int, default=1000)
-    parser.add_argument("--train_post_nms_top_n", type=int, default=300)
-    parser.add_argument("--test_pre_nms_top_n", type=int, default=600)
-    parser.add_argument("--test_post_nms_top_n", type=int, default=100)
+    parser.add_argument("--train_pre_nms_top_n", type=int, default=2000)
+    parser.add_argument("--train_post_nms_top_n", type=int, default=2000)
+    parser.add_argument("--test_pre_nms_top_n", type=int, default=1000)
+    parser.add_argument("--test_post_nms_top_n", type=int, default=1000)
     parser.add_argument(
         "--fixed_batch_shape",
         action=argparse.BooleanOptionalAction,
@@ -155,6 +155,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--horizontal_flip_probability", type=float, default=0.5)
     parser.add_argument("--color_jitter_probability", type=float, default=0.3)
     parser.add_argument("--grayscale_probability", type=float, default=0.05)
+    parser.add_argument("--scale_jitter_probability", type=float, default=0.4)
+    parser.add_argument("--scale_jitter_min", type=float, default=0.85)
+    parser.add_argument("--scale_jitter_max", type=float, default=1.15)
+    parser.add_argument("--safe_crop_probability", type=float, default=0.2)
+    parser.add_argument("--safe_crop_min_scale", type=float, default=0.7)
+    parser.add_argument("--safe_crop_min_visibility", type=float, default=0.5)
+    parser.add_argument("--blur_probability", type=float, default=0.1)
+    parser.add_argument("--blur_kernel_size", type=int, default=5)
+    parser.add_argument("--noise_probability", type=float, default=0.1)
+    parser.add_argument("--noise_std", type=float, default=0.02)
     parser.add_argument(
         "--sampler_strategy",
         choices=["none", "class_balanced", "class_small_balanced"],
@@ -802,6 +812,18 @@ def format_session_info(info: dict[str, Any]) -> str:
             f"│   ├── batch_size         : {hp['batch_size']}",
             f"│   ├── num_workers        : {hp['num_workers']}",
             f"│   ├── augmentation       : {hp['augmentation']}",
+            f"│   ├── flip_probability   : {hp['horizontal_flip_probability']}",
+            f"│   ├── color_probability  : {hp['color_jitter_probability']}",
+            f"│   ├── grayscale_prob     : {hp['grayscale_probability']}",
+            f"│   ├── scale_jitter_prob  : {hp['scale_jitter_probability']}",
+            f"│   ├── scale_jitter_range : [{hp['scale_jitter_min']}, {hp['scale_jitter_max']}]",
+            f"│   ├── safe_crop_prob     : {hp['safe_crop_probability']}",
+            f"│   ├── safe_crop_scale    : {hp['safe_crop_min_scale']}",
+            f"│   ├── safe_crop_visible  : {hp['safe_crop_min_visibility']}",
+            f"│   ├── blur_probability   : {hp['blur_probability']}",
+            f"│   ├── blur_kernel_size   : {hp['blur_kernel_size']}",
+            f"│   ├── noise_probability  : {hp['noise_probability']}",
+            f"│   ├── noise_std          : {hp['noise_std']}",
             f"│   ├── sampler_strategy   : {hp['sampler_strategy']}",
             f"│   ├── small_object_boost : {hp['small_object_boost']}",
             f"│   ├── empty_image_weight : {hp['empty_image_weight']}",
@@ -904,9 +926,23 @@ def main() -> None:
         args.horizontal_flip_probability,
         args.color_jitter_probability,
         args.grayscale_probability,
+        args.scale_jitter_probability,
+        args.safe_crop_probability,
+        args.blur_probability,
+        args.noise_probability,
     ]
     if any(value < 0 or value > 1 for value in probabilities):
         raise ValueError("Augmentation probabilities must be between 0 and 1.")
+    if args.scale_jitter_min <= 0 or args.scale_jitter_max <= 0 or args.scale_jitter_min > args.scale_jitter_max:
+        raise ValueError("--scale_jitter_min and --scale_jitter_max must be positive with min <= max.")
+    if args.safe_crop_min_scale <= 0 or args.safe_crop_min_scale > 1:
+        raise ValueError("--safe_crop_min_scale must be in (0, 1].")
+    if args.safe_crop_min_visibility <= 0 or args.safe_crop_min_visibility > 1:
+        raise ValueError("--safe_crop_min_visibility must be in (0, 1].")
+    if args.blur_kernel_size <= 0:
+        raise ValueError("--blur_kernel_size must be positive.")
+    if args.noise_std < 0:
+        raise ValueError("--noise_std must be greater than or equal to 0.")
     if args.oversample_factor < 1.0:
         raise ValueError("--oversample_factor must be greater than or equal to 1.0.")
     if args.small_object_boost < 1.0:
@@ -935,6 +971,16 @@ def main() -> None:
             horizontal_flip_probability=args.horizontal_flip_probability,
             color_jitter_probability=args.color_jitter_probability,
             grayscale_probability=args.grayscale_probability,
+            scale_jitter_probability=args.scale_jitter_probability,
+            scale_jitter_min=args.scale_jitter_min,
+            scale_jitter_max=args.scale_jitter_max,
+            safe_crop_probability=args.safe_crop_probability,
+            safe_crop_min_scale=args.safe_crop_min_scale,
+            safe_crop_min_visibility=args.safe_crop_min_visibility,
+            blur_probability=args.blur_probability,
+            blur_kernel_size=args.blur_kernel_size,
+            noise_probability=args.noise_probability,
+            noise_std=args.noise_std,
         )
         if args.augmentation
         else None
@@ -1082,6 +1128,16 @@ def main() -> None:
             "horizontal_flip_probability": args.horizontal_flip_probability,
             "color_jitter_probability": args.color_jitter_probability,
             "grayscale_probability": args.grayscale_probability,
+            "scale_jitter_probability": args.scale_jitter_probability,
+            "scale_jitter_min": args.scale_jitter_min,
+            "scale_jitter_max": args.scale_jitter_max,
+            "safe_crop_probability": args.safe_crop_probability,
+            "safe_crop_min_scale": args.safe_crop_min_scale,
+            "safe_crop_min_visibility": args.safe_crop_min_visibility,
+            "blur_probability": args.blur_probability,
+            "blur_kernel_size": args.blur_kernel_size,
+            "noise_probability": args.noise_probability,
+            "noise_std": args.noise_std,
             "sampler_strategy": args.sampler_strategy,
             "small_object_boost": args.small_object_boost,
             "small_object_threshold": args.small_object_threshold,
