@@ -46,6 +46,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--anchor_ratios", default="", help="Optional comma-separated anchor aspect ratios.")
     parser.add_argument("--retina_topk_candidates", type=int, default=1000)
     parser.add_argument("--retina_max_detections", type=int, default=300)
+    parser.add_argument("--yolo_topk_candidates", type=int, default=1000)
+    parser.add_argument("--yolo_max_detections", type=int, default=300)
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -193,6 +195,8 @@ def main() -> None:
         roi_dropout=float(model_config.get("roi_dropout", 0.0)),
         retina_topk_candidates=int(model_config.get("retina_topk_candidates", args.retina_topk_candidates)),
         retina_max_detections=int(model_config.get("retina_max_detections", args.retina_max_detections)),
+        yolo_topk_candidates=int(model_config.get("yolo_topk_candidates", args.yolo_topk_candidates)),
+        yolo_max_detections=int(model_config.get("yolo_max_detections", args.yolo_max_detections)),
     ).to(device)
     if checkpoint_path.exists():
         checkpoint = load_checkpoint(checkpoint_path, model, device)

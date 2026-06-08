@@ -108,6 +108,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--roi_dropout", type=float, default=0.0)
     parser.add_argument("--retina_topk_candidates", type=int, default=1000)
     parser.add_argument("--retina_max_detections", type=int, default=300)
+    parser.add_argument("--yolo_topk_candidates", type=int, default=1000)
+    parser.add_argument("--yolo_max_detections", type=int, default=300)
     parser.add_argument(
         "--lr_milestones",
         default="15,25",
@@ -858,6 +860,8 @@ def format_session_info(info: dict[str, Any]) -> str:
             f"│   ├── roi_dropout        : {hp['roi_dropout']}",
             f"│   ├── retina_topk       : {hp['retina_topk_candidates']}",
             f"│   ├── retina_max_det    : {hp['retina_max_detections']}",
+            f"│   ├── yolo_topk         : {hp['yolo_topk_candidates']}",
+            f"│   ├── yolo_max_det      : {hp['yolo_max_detections']}",
             f"│   ├── min_size           : {hp['min_size']}",
             f"│   ├── max_size           : {hp['max_size']}",
             f"│   ├── anchor_sizes       : {hp['anchor_sizes'] or 'model_default'}",
@@ -927,12 +931,18 @@ def main() -> None:
         raise ValueError("--trainable_backbone_layers must be between 0 and 5 for torchvision.")
     if args.model_impl == "retina" and not 0 <= args.trainable_backbone_layers <= 4:
         raise ValueError("--trainable_backbone_layers must be between 0 and 4 for RetinaNet.")
+    if args.model_impl == "yolo" and not 0 <= args.trainable_backbone_layers <= 4:
+        raise ValueError("--trainable_backbone_layers must be between 0 and 4 for YOLO-like detector.")
     if args.roi_dropout < 0 or args.roi_dropout >= 1:
         raise ValueError("--roi_dropout must be in [0, 1).")
     if args.retina_topk_candidates <= 0:
         raise ValueError("--retina_topk_candidates must be positive.")
     if args.retina_max_detections <= 0:
         raise ValueError("--retina_max_detections must be positive.")
+    if args.yolo_topk_candidates <= 0:
+        raise ValueError("--yolo_topk_candidates must be positive.")
+    if args.yolo_max_detections <= 0:
+        raise ValueError("--yolo_max_detections must be positive.")
     custom_top_n_values = [
         args.train_pre_nms_top_n,
         args.train_post_nms_top_n,
@@ -1058,6 +1068,8 @@ def main() -> None:
         box_nms_thresh=0.5,
         retina_topk_candidates=args.retina_topk_candidates,
         retina_max_detections=args.retina_max_detections,
+        yolo_topk_candidates=args.yolo_topk_candidates,
+        yolo_max_detections=args.yolo_max_detections,
     ).to(device)
     if world_size > 1:
         model = DistributedDataParallel(model, device_ids=[device.index])
@@ -1135,6 +1147,8 @@ def main() -> None:
             "roi_dropout": args.roi_dropout,
             "retina_topk_candidates": args.retina_topk_candidates,
             "retina_max_detections": args.retina_max_detections,
+            "yolo_topk_candidates": args.yolo_topk_candidates,
+            "yolo_max_detections": args.yolo_max_detections,
             "min_size": args.min_size,
             "max_size": args.max_size,
             "anchor_sizes": anchor_sizes,
@@ -1237,6 +1251,8 @@ def main() -> None:
         "roi_dropout": args.roi_dropout,
         "retina_topk_candidates": args.retina_topk_candidates,
         "retina_max_detections": args.retina_max_detections,
+        "yolo_topk_candidates": args.yolo_topk_candidates,
+        "yolo_max_detections": args.yolo_max_detections,
         "min_size": args.min_size,
         "max_size": args.max_size,
         "anchor_sizes": anchor_sizes,

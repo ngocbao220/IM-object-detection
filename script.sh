@@ -46,7 +46,7 @@ THRESHOLD_TUNING_OUTPUT="${THRESHOLD_TUNING_OUTPUT:-${RUN_RESULTS_DIR}/threshold
 # =========================
 # 3. Important Model Params
 # =========================
-# MODEL_IMPL accepts: torchvision, custom, retina. CUSTOM_MODEL=0/1 is kept for compatibility.
+# MODEL_IMPL accepts: torchvision, custom, retina, yolo. CUSTOM_MODEL=0/1 is kept for compatibility.
 MODEL_IMPL="${MODEL_IMPL:-}"
 CUSTOM_MODEL="${CUSTOM_MODEL:-1}"
 BACKBONE="${BACKBONE:-resnet50}"
@@ -57,6 +57,8 @@ MAX_SIZE="${MAX_SIZE:-768}"
 ROI_DROPOUT="${ROI_DROPOUT:-0.2}"
 RETINA_TOPK_CANDIDATES="${RETINA_TOPK_CANDIDATES:-1000}"
 RETINA_MAX_DETECTIONS="${RETINA_MAX_DETECTIONS:-300}"
+YOLO_TOPK_CANDIDATES="${YOLO_TOPK_CANDIDATES:-1000}"
+YOLO_MAX_DETECTIONS="${YOLO_MAX_DETECTIONS:-300}"
 # Empty anchor values use model defaults. Custom FPN default: sizes=32,64,128,256,512 and ratios=0.5,1.0,2.0.
 ANCHOR_SIZES="${ANCHOR_SIZES:-}"
 ANCHOR_RATIOS="${ANCHOR_RATIOS:-}"
@@ -152,8 +154,11 @@ if [[ -n "${MODEL_IMPL}" ]]; then
     retina)
       CUSTOM_MODEL=0
       ;;
+    yolo)
+      CUSTOM_MODEL=0
+      ;;
     *)
-      echo "MODEL_IMPL must be one of 'torchvision', 'custom', 'retina'. Got: ${MODEL_IMPL}"
+      echo "MODEL_IMPL must be one of 'torchvision', 'custom', 'retina', 'yolo'. Got: ${MODEL_IMPL}"
       exit 1
       ;;
   esac
@@ -227,6 +232,8 @@ train() {
     --roi_dropout "${ROI_DROPOUT}"
     --retina_topk_candidates "${RETINA_TOPK_CANDIDATES}"
     --retina_max_detections "${RETINA_MAX_DETECTIONS}"
+    --yolo_topk_candidates "${YOLO_TOPK_CANDIDATES}"
+    --yolo_max_detections "${YOLO_MAX_DETECTIONS}"
     --train_pre_nms_top_n "${TRAIN_PRE_NMS_TOP_N}"
     --train_post_nms_top_n "${TRAIN_POST_NMS_TOP_N}"
     --test_pre_nms_top_n "${TEST_PRE_NMS_TOP_N}"
@@ -330,6 +337,8 @@ predict() {
     --max_size "${MAX_SIZE}"
     --retina_topk_candidates "${RETINA_TOPK_CANDIDATES}"
     --retina_max_detections "${RETINA_MAX_DETECTIONS}"
+    --yolo_topk_candidates "${YOLO_TOPK_CANDIDATES}"
+    --yolo_max_detections "${YOLO_MAX_DETECTIONS}"
   )
 
   if [[ -n "${ANCHOR_SIZES}" ]]; then
@@ -361,6 +370,8 @@ predict_raw() {
   raw_nms_threshold="${RAW_NMS_THRESHOLD:-0.99}"
   raw_retina_max_detections="${RAW_RETINA_MAX_DETECTIONS:-1000}"
   raw_retina_topk_candidates="${RAW_RETINA_TOPK_CANDIDATES:-2000}"
+  raw_yolo_max_detections="${RAW_YOLO_MAX_DETECTIONS:-1000}"
+  raw_yolo_topk_candidates="${RAW_YOLO_TOPK_CANDIDATES:-2000}"
 
   echo "============ Raw Prediction Export ============"
   echo "image_dir: ${PREDICT_IMAGE_DIR}"
@@ -371,6 +382,8 @@ predict_raw() {
   echo "nms_threshold: ${raw_nms_threshold}"
   echo "retina_topk_candidates: ${raw_retina_topk_candidates}"
   echo "retina_max_detections: ${raw_retina_max_detections}"
+  echo "yolo_topk_candidates: ${raw_yolo_topk_candidates}"
+  echo "yolo_max_detections: ${raw_yolo_max_detections}"
   echo "==============================================="
 
   predict_args=(
@@ -385,6 +398,8 @@ predict_raw() {
     --max_size "${MAX_SIZE}"
     --retina_topk_candidates "${raw_retina_topk_candidates}"
     --retina_max_detections "${raw_retina_max_detections}"
+    --yolo_topk_candidates "${raw_yolo_topk_candidates}"
+    --yolo_max_detections "${raw_yolo_max_detections}"
   )
 
   if [[ -n "${ANCHOR_SIZES}" ]]; then

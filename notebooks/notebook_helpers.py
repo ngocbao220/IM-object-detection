@@ -1256,6 +1256,7 @@ def load_prediction_analysis(
     from utils.metric import (
         analyze_detection_errors,
         annotation_to_ground_truth,
+        compute_confusion_matrix,
         evaluate_extended_metrics,
         prediction_list_to_dict,
     )
@@ -1269,7 +1270,53 @@ def load_prediction_analysis(
         "predictions": predictions,
         "metrics": evaluate_extended_metrics(ground_truth, predictions, annotation["classes"]),
         "errors": analyze_detection_errors(ground_truth, predictions, iou_threshold),
+        "confusion": compute_confusion_matrix(
+            ground_truth,
+            predictions,
+            annotation["classes"],
+            iou_threshold,
+        ),
     }
+
+
+def confusion_matrix_table(analysis: dict[str, Any]) -> Any:
+    """Return GT-vs-predicted-class confusion matrix as a DataFrame."""
+    import pandas as pd
+
+    matrix = analysis["confusion"]["matrix"]
+    return pd.DataFrame.from_dict(matrix, orient="index").fillna(0).astype(int)
+
+
+def confusion_pairs_table(analysis: dict[str, Any], include_correct: bool = False) -> Any:
+    """Return non-zero confusion pairs sorted by count."""
+    import pandas as pd
+
+    rows = analysis["confusion"]["pairs"]
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return pd.DataFrame(columns=["gt_class", "predicted_class", "count"])
+    if not include_correct:
+        table = table[table["gt_class"] != table["predicted_class"]]
+    return table.sort_values("count", ascending=False).reset_index(drop=True)
+
+
+def plot_confusion_matrix(analysis: dict[str, Any]) -> Any:
+    """Plot confusion matrix excluding background false-positive row."""
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    table = confusion_matrix_table(analysis)
+    classes = analysis["classes"]
+    plot_table = table.loc[classes, [*classes, "missed"]]
+    fig_width = max(8, 1.2 * len(plot_table.columns))
+    fig_height = max(5, 0.8 * len(plot_table.index))
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    sns.heatmap(plot_table, annot=True, fmt="d", cmap="Blues", ax=ax)
+    ax.set_xlabel("Predicted class")
+    ax.set_ylabel("Ground-truth class")
+    ax.set_title(f"Confusion matrix @ IoU {analysis['confusion']['iou_threshold']}")
+    plt.tight_layout()
+    return ax
 
 
 def prediction_metrics_table(analysis: dict[str, Any]) -> Any:

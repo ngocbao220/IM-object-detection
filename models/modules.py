@@ -354,6 +354,54 @@ class RetinaRegressionHead(nn.Module):
         return torch.cat(outputs, dim=1)
 
 
+class YOLODetectionHead(nn.Module):
+    def __init__(self, in_channels: int, num_anchors: int, num_classes: int, num_convs: int = 2) -> None:
+        super().__init__()
+        layers = []
+        for _ in range(num_convs):
+            conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+            nn.init.normal_(conv.weight, std=0.01)
+            nn.init.constant_(conv.bias, 0)
+            layers.extend([conv, nn.ReLU()])
+        self.tower = nn.Sequential(*layers)
+        self.objectness = nn.Conv2d(in_channels, num_anchors, kernel_size=1)
+        self.bbox_reg = nn.Conv2d(in_channels, num_anchors * 4, kernel_size=1)
+        self.class_logits = nn.Conv2d(in_channels, num_anchors * num_classes, kernel_size=1)
+        for layer in [self.objectness, self.bbox_reg, self.class_logits]:
+            nn.init.normal_(layer.weight, std=0.01)
+            nn.init.constant_(layer.bias, 0)
+        nn.init.constant_(self.objectness.bias, -4.595)
+        self.num_classes = num_classes
+
+    def forward(self, features: OrderedDict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        objectness_outputs = []
+        bbox_outputs = []
+        class_outputs = []
+        for feature in features.values():
+            hidden = self.tower(feature)
+            objectness = self.objectness(hidden)
+            bbox_reg = self.bbox_reg(hidden)
+            class_logits = self.class_logits(hidden)
+
+            batch_size, anchors, height, width = objectness.shape
+            objectness = objectness.permute(0, 2, 3, 1).reshape(batch_size, -1)
+
+            bbox_reg = bbox_reg.view(batch_size, anchors, 4, height, width)
+            bbox_reg = bbox_reg.permute(0, 3, 4, 1, 2).reshape(batch_size, -1, 4)
+
+            class_logits = class_logits.view(batch_size, anchors, self.num_classes, height, width)
+            class_logits = class_logits.permute(0, 3, 4, 1, 2).reshape(batch_size, -1, self.num_classes)
+
+            objectness_outputs.append(objectness)
+            bbox_outputs.append(bbox_reg)
+            class_outputs.append(class_logits)
+        return (
+            torch.cat(objectness_outputs, dim=1),
+            torch.cat(bbox_outputs, dim=1),
+            torch.cat(class_outputs, dim=1),
+        )
+
+
 def sigmoid_focal_loss(
     inputs: torch.Tensor,
     targets: torch.Tensor,
