@@ -7,5 +7,6 @@ uv.lock
 *__pycache__
 wandb/
 *.pth
+saved_results/**/checkpoint_export
 saved_results/checkpoints
 saved_results/metrics
