@@ -384,6 +384,75 @@ def analyze_detection_errors(
     }
 
 
+def compute_confusion_matrix(
+    ground_truth: dict[str, list[dict[str, Any]]],
+    predictions: dict[str, list[dict[str, Any]]],
+    classes: list[str],
+    iou_threshold: float = 0.5,
+) -> dict[str, Any]:
+    """Build GT-vs-predicted-class confusion counts for detection outputs.
+
+    Rows are ground-truth classes plus background_fp. Columns are predicted
+    classes plus missed. A GT object is matched to the highest-confidence
+    unmatched prediction with IoU >= threshold, regardless of predicted class.
+    """
+    labels = list(classes)
+    matrix: dict[str, dict[str, int]] = {
+        row: {column: 0 for column in [*labels, "missed"]} for row in labels
+    }
+    matrix["background_fp"] = {column: 0 for column in [*labels, "missed"]}
+
+    for image_id in sorted(set(ground_truth) | set(predictions)):
+        gt_boxes = copy.deepcopy(ground_truth.get(image_id, []))
+        pred_boxes = sorted(
+            copy.deepcopy(predictions.get(image_id, [])),
+            key=lambda box: float(box.get("confidence", 1.0)),
+            reverse=True,
+        )
+        matched_predictions: set[int] = set()
+
+        for gt in gt_boxes:
+            best_index = -1
+            best_iou = 0.0
+            best_confidence = -1.0
+            for pred_index, prediction in enumerate(pred_boxes):
+                if pred_index in matched_predictions:
+                    continue
+                iou = compute_iou(gt["bbox"], prediction["bbox"])
+                confidence = float(prediction.get("confidence", 1.0))
+                if iou >= iou_threshold and (iou > best_iou or (iou == best_iou and confidence > best_confidence)):
+                    best_index = pred_index
+                    best_iou = iou
+                    best_confidence = confidence
+            gt_class = gt["class"]
+            if best_index >= 0:
+                pred_class = pred_boxes[best_index]["class"]
+                if gt_class in matrix and pred_class in matrix[gt_class]:
+                    matrix[gt_class][pred_class] += 1
+                matched_predictions.add(best_index)
+            elif gt_class in matrix:
+                matrix[gt_class]["missed"] += 1
+
+        for pred_index, prediction in enumerate(pred_boxes):
+            if pred_index not in matched_predictions:
+                pred_class = prediction["class"]
+                if pred_class in matrix["background_fp"]:
+                    matrix["background_fp"][pred_class] += 1
+
+    pairs = []
+    for gt_class, columns in matrix.items():
+        for pred_class, count in columns.items():
+            if count:
+                pairs.append({"gt_class": gt_class, "predicted_class": pred_class, "count": count})
+
+    return {
+        "iou_threshold": iou_threshold,
+        "classes": labels,
+        "matrix": matrix,
+        "pairs": sorted(pairs, key=lambda item: item["count"], reverse=True),
+    }
+
+
 def evaluate_files(
     ground_truth_path: str | Path,
     predictions_path: str | Path,

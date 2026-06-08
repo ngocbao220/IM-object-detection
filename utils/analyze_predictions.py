@@ -10,6 +10,7 @@ from utils.helper import print_run_configuration, save_json
 from utils.metric import (
     analyze_detection_errors,
     annotation_to_ground_truth,
+    compute_confusion_matrix,
     evaluate_extended_metrics,
     load_json,
     prediction_list_to_dict,
@@ -117,6 +118,31 @@ def save_gallery(
     return index
 
 
+def save_confusion_outputs(confusion: dict[str, Any], output_dir: Path) -> None:
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    import seaborn as sns
+
+    matrix_df = pd.DataFrame.from_dict(confusion["matrix"], orient="index").fillna(0).astype(int)
+    pairs_df = pd.DataFrame(confusion["pairs"])
+    matrix_df.to_csv(output_dir / "confusion_matrix.csv", index_label="gt_class")
+    pairs_df.to_csv(output_dir / "confusion_pairs.csv", index=False)
+
+    plot_rows = [class_name for class_name in confusion["classes"] if class_name in matrix_df.index]
+    plot_cols = list(confusion["classes"]) + ["missed"]
+    plot_df = matrix_df.loc[plot_rows, plot_cols]
+    fig_width = max(8, 1.2 * len(plot_cols))
+    fig_height = max(5, 0.8 * len(plot_rows))
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    sns.heatmap(plot_df, annot=True, fmt="d", cmap="Blues", ax=ax)
+    ax.set_xlabel("Predicted class")
+    ax.set_ylabel("Ground-truth class")
+    ax.set_title(f"Confusion matrix @ IoU {confusion['iou_threshold']}")
+    fig.tight_layout()
+    fig.savefig(output_dir / "confusion_matrix.png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     args = parse_args()
     print_run_configuration(
@@ -135,10 +161,18 @@ def main() -> None:
     predictions = prediction_list_to_dict(load_json(args.predictions))
     metrics = evaluate_extended_metrics(ground_truth, predictions, annotation["classes"])
     errors = analyze_detection_errors(ground_truth, predictions, args.iou_threshold)
+    confusion = compute_confusion_matrix(
+        ground_truth,
+        predictions,
+        annotation["classes"],
+        args.iou_threshold,
+    )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     save_json(metrics, args.output_dir / "metrics.json")
     save_json(errors, args.output_dir / "errors.json")
+    save_json(confusion, args.output_dir / "confusion_matrix.json")
+    save_confusion_outputs(confusion, args.output_dir)
     gallery = save_gallery(
         args.image_dir,
         args.output_dir,

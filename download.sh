@@ -92,6 +92,27 @@ copy_kaggle_checkpoints() {
   fi
   unzip -o "${zip_file}" -d "${OUTPUT_ROOT}" >/dev/null
   rm -rf "${tmp_dir}"
+  normalize_checkpoint_layout
+}
+
+normalize_checkpoint_layout() {
+  local run_name run_dir checkpoint_dir
+  for run_name in "${RUN_NAME_LIST[@]}"; do
+    run_dir="${OUTPUT_ROOT}/${run_name}"
+    checkpoint_dir="${run_dir}/checkpoints"
+    if [[ ! -d "${run_dir}" ]]; then
+      continue
+    fi
+    mkdir -p "${checkpoint_dir}"
+    if [[ -f "${run_dir}/best_model.pth" ]]; then
+      mv -f "${run_dir}/best_model.pth" "${checkpoint_dir}/best_model.pth"
+      echo "Moved ${run_dir}/best_model.pth -> ${checkpoint_dir}/best_model.pth"
+    fi
+    if [[ -f "${run_dir}/last_model.pth" ]]; then
+      mv -f "${run_dir}/last_model.pth" "${checkpoint_dir}/last_model.pth"
+      echo "Moved ${run_dir}/last_model.pth -> ${checkpoint_dir}/last_model.pth"
+    fi
+  done
 }
 
 case "${SOURCE}" in
