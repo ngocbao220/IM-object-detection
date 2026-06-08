@@ -3,12 +3,12 @@ set -euo pipefail
 
 SOURCE="${SOURCE:-kaggle}"
 RUN_NAME="${RUN_NAME:-custom-baseline}"
-RUN_NAMES="${RUN_NAMES:-}"
-OUTPUT_DIR="${OUTPUT_DIR:-./saved_result/${RUN_NAME}/checkpoints}"
+RUN_NAMES="${RUN_NAMES:-custom-baseline,retina-baseline,torchvision-augmentmax}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-./saved_results}"
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 KAGGLE_DATASET_SLUG="${KAGGLE_DATASET_SLUG:-ngocbaotrinhtuan/object-detection}"
 
-mkdir -p "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_ROOT}"
 
 RUN_NAME_LIST=()
 if [[ -n "${RUN_NAMES}" ]]; then
@@ -50,11 +50,7 @@ copy_local_checkpoints() {
       continue
     fi
 
-    if [[ ${#RUN_NAME_LIST[@]} -gt 1 ]]; then
-      target_dir="${OUTPUT_DIR}/${run_name}"
-    else
-      target_dir="${OUTPUT_DIR}"
-    fi
+    target_dir="${OUTPUT_ROOT}/${run_name}/checkpoints"
     mkdir -p "${target_dir}"
 
     if [[ -n "${best_src}" ]]; then
@@ -84,7 +80,7 @@ copy_kaggle_checkpoints() {
     exit 1
   fi
 
-  local tmp_dir="${OUTPUT_DIR}/.kaggle_download"
+  local tmp_dir="${OUTPUT_ROOT}/.kaggle_download"
   rm -rf "${tmp_dir}"
   mkdir -p "${tmp_dir}"
   kaggle datasets download -d "${KAGGLE_DATASET_SLUG}" -p "${tmp_dir}"
@@ -94,7 +90,7 @@ copy_kaggle_checkpoints() {
     echo "Kaggle download did not produce a zip file." >&2
     exit 1
   fi
-  unzip -o "${zip_file}" -d "${OUTPUT_DIR}" >/dev/null
+  unzip -o "${zip_file}" -d "${OUTPUT_ROOT}" >/dev/null
   rm -rf "${tmp_dir}"
 }
 
@@ -111,4 +107,4 @@ case "${SOURCE}" in
     ;;
 esac
 
-echo "Done. Files are in ${OUTPUT_DIR}"
+echo "Done. Files are in ${OUTPUT_ROOT}"
