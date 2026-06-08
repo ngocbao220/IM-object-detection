@@ -1,0 +1,283 @@
+{
+  "best": {
+    "confidence_threshold": 0.2,
+    "nms_threshold": 0.5,
+    "mAP": 0.6389336326410516,
+    "micro_precision": 0.2193695621166738,
+    "micro_recall": 0.7610094012864919,
+    "f1": 0.3405668733392383,
+    "num_predictions": 7011
+  },
+  "results": [
+    {
+      "confidence_threshold": 0.2,
+      "nms_threshold": 0.5,
+      "mAP": 0.6389336326410516,
+      "micro_precision": 0.2193695621166738,
+      "micro_recall": 0.7610094012864919,
+      "f1": 0.3405668733392383,
+      "num_predictions": 7011
+    },
+    {
+      "confidence_threshold": 0.2,
+      "nms_threshold": 0.6,
+      "mAP": 0.6349582562539112,
+      "micro_precision": 0.15279109917513908,
+      "micro_recall": 0.7882236516575952,
+      "f1": 0.2559652928416486,
+      "num_predictions": 10426
+    },
+    {
+      "confidence_threshold": 0.3,
+      "nms_threshold": 0.5,
+      "mAP": 0.6338847165714563,
+      "micro_precision": 0.2693548387096774,
+      "micro_recall": 0.743691241959426,
+      "f1": 0.39547427970003945,
+      "num_predictions": 5580
+    },
+    {
+      "confidence_threshold": 0.3,
+      "nms_threshold": 0.6,
+      "mAP": 0.6298141747718645,
+      "micro_precision": 0.1903367496339678,
+      "micro_recall": 0.7718951014349332,
+      "f1": 0.3053733972790448,
+      "num_predictions": 8196
+    },
+    {
+      "confidence_threshold": 0.2,
+      "nms_threshold": 0.4,
+      "mAP": 0.6296893593632047,
+      "micro_precision": 0.2827653359298929,
+      "micro_recall": 0.7184562097971301,
+      "f1": 0.4058133035215204,
+      "num_predictions": 5135
+    },
+    {
+      "confidence_threshold": 0.4,
+      "nms_threshold": 0.5,
+      "mAP": 0.6279155526121263,
+      "micro_precision": 0.3269530380592032,
+      "micro_recall": 0.7268678871845621,
+      "f1": 0.45102855388394225,
+      "num_predictions": 4493
+    },
+    {
+      "confidence_threshold": 0.3,
+      "nms_threshold": 0.4,
+      "mAP": 0.6262174532293422,
+      "micro_precision": 0.3426304400096177,
+      "micro_recall": 0.7050964868876793,
+      "f1": 0.4611650485436893,
+      "num_predictions": 4159
+    },
+    {
+      "confidence_threshold": 0.4,
+      "nms_threshold": 0.6,
+      "mAP": 0.6256981606208749,
+      "micro_precision": 0.23581395348837209,
+      "micro_recall": 0.7525977238990599,
+      "f1": 0.35910754338330775,
+      "num_predictions": 6450
+    },
+    {
+      "confidence_threshold": 0.4,
+      "nms_threshold": 0.4,
+      "mAP": 0.6225119251918343,
+      "micro_precision": 0.4091174751607247,
+      "micro_recall": 0.6927263730826324,
+      "f1": 0.5144221936432115,
+      "num_predictions": 3422
+    },
+    {
+      "confidence_threshold": 0.5,
+      "nms_threshold": 0.5,
+      "mAP": 0.6220681276616361,
+      "micro_precision": 0.39681653169505726,
+      "micro_recall": 0.7031172686788718,
+      "f1": 0.5073188147090326,
+      "num_predictions": 3581
+    },
+    {
+      "confidence_threshold": 0.5,
+      "nms_threshold": 0.6,
+      "mAP": 0.6214803560956546,
+      "micro_precision": 0.2940235858484909,
+      "micro_recall": 0.7278574962889659,
+      "f1": 0.4188496583143508,
+      "num_predictions": 5003
+    },
+    {
+      "confidence_threshold": 0.2,
+      "nms_threshold": 0.3,
+      "mAP": 0.6185624178308535,
+      "micro_precision": 0.34711368792538444,
+      "micro_recall": 0.6813458683819891,
+      "f1": 0.45991983967935873,
+      "num_predictions": 3967
+    },
+    {
+      "confidence_threshold": 0.5,
+      "nms_threshold": 0.4,
+      "mAP": 0.6170141438848553,
+      "micro_precision": 0.4873078298176618,
+      "micro_recall": 0.6744186046511628,
+      "f1": 0.5657949356579494,
+      "num_predictions": 2797
+    },
+    {
+      "confidence_threshold": 0.3,
+      "nms_threshold": 0.3,
+      "mAP": 0.6161016492889445,
+      "micro_precision": 0.40873493975903613,
+      "micro_recall": 0.6714497773379515,
+      "f1": 0.5081445422205579,
+      "num_predictions": 3320
+    },
+    {
+      "confidence_threshold": 0.6,
+      "nms_threshold": 0.6,
+      "mAP": 0.6145825250735152,
+      "micro_precision": 0.36180005113781644,
+      "micro_recall": 0.7001484413656606,
+      "f1": 0.4770734996628456,
+      "num_predictions": 3911
+    },
+    {
+      "confidence_threshold": 0.6,
+      "nms_threshold": 0.5,
+      "mAP": 0.6137018892309772,
+      "micro_precision": 0.4751131221719457,
+      "micro_recall": 0.6754082137555666,
+      "f1": 0.5578259092766652,
+      "num_predictions": 2873
+    },
+    {
+      "confidence_threshold": 0.4,
+      "nms_threshold": 0.3,
+      "mAP": 0.6125460827134114,
+      "micro_precision": 0.4716249559393726,
+      "micro_recall": 0.6620484908461158,
+      "f1": 0.5508439687114038,
+      "num_predictions": 2837
+    },
+    {
+      "confidence_threshold": 0.6,
+      "nms_threshold": 0.4,
+      "mAP": 0.6088045580541216,
+      "micro_precision": 0.5660377358490566,
+      "micro_recall": 0.6531420089064819,
+      "f1": 0.6064782908339076,
+      "num_predictions": 2332
+    },
+    {
+      "confidence_threshold": 0.2,
+      "nms_threshold": 0.7,
+      "mAP": 0.6084603866521824,
+      "micro_precision": 0.09252485998399818,
+      "micro_recall": 0.8010885700148441,
+      "f1": 0.1658896459859624,
+      "num_predictions": 17498
+    },
+    {
+      "confidence_threshold": 0.5,
+      "nms_threshold": 0.3,
+      "mAP": 0.608119116541517,
+      "micro_precision": 0.54337899543379,
+      "micro_recall": 0.6476991588322613,
+      "f1": 0.5909706546275395,
+      "num_predictions": 2409
+    },
+    {
+      "confidence_threshold": 0.3,
+      "nms_threshold": 0.7,
+      "mAP": 0.6061422215059948,
+      "micro_precision": 0.11670698629132761,
+      "micro_recall": 0.7877288471053934,
+      "f1": 0.2032945983910101,
+      "num_predictions": 13641
+    },
+    {
+      "confidence_threshold": 0.7,
+      "nms_threshold": 0.6,
+      "mAP": 0.6038017056417557,
+      "micro_precision": 0.45350404312668463,
+      "micro_recall": 0.6660069272637308,
+      "f1": 0.5395870916015234,
+      "num_predictions": 2968
+    },
+    {
+      "confidence_threshold": 0.4,
+      "nms_threshold": 0.7,
+      "mAP": 0.6037190505872869,
+      "micro_precision": 0.14688413311963797,
+      "micro_recall": 0.7709054923305294,
+      "f1": 0.24675324675324675,
+      "num_predictions": 10607
+    },
+    {
+      "confidence_threshold": 0.7,
+      "nms_threshold": 0.5,
+      "mAP": 0.6023011377644769,
+      "micro_precision": 0.5675087108013938,
+      "micro_recall": 0.64473033151905,
+      "f1": 0.6036599490386843,
+      "num_predictions": 2296
+    },
+    {
+      "confidence_threshold": 0.6,
+      "nms_threshold": 0.3,
+      "mAP": 0.6013924079696962,
+      "micro_precision": 0.6108445297504799,
+      "micro_recall": 0.6298861949529936,
+      "f1": 0.6202192448233862,
+      "num_predictions": 2084
+    },
+    {
+      "confidence_threshold": 0.5,
+      "nms_threshold": 0.7,
+      "mAP": 0.600800987053457,
+      "micro_precision": 0.18659577099047855,
+      "micro_recall": 0.7466600692726373,
+      "f1": 0.2985753858330036,
+      "num_predictions": 8087
+    },
+    {
+      "confidence_threshold": 0.7,
+      "nms_threshold": 0.4,
+      "mAP": 0.5966661903875377,
+      "micro_precision": 0.6498973305954825,
+      "micro_recall": 0.6264225630875804,
+      "f1": 0.6379440665154951,
+      "num_predictions": 1948
+    },
+    {
+      "confidence_threshold": 0.6,
+      "nms_threshold": 0.7,
+      "mAP": 0.5966246464282123,
+      "micro_precision": 0.2375184154526109,
+      "micro_recall": 0.7179614052449282,
+      "f1": 0.35694956949569495,
+      "num_predictions": 6109
+    },
+    {
+      "confidence_threshold": 0.7,
+      "nms_threshold": 0.3,
+      "mAP": 0.5903361547030935,
+      "micro_precision": 0.6855555555555556,
+      "micro_recall": 0.6105888174171202,
+      "f1": 0.6459042135566606,
+      "num_predictions": 1800
+    },
+    {
+      "confidence_threshold": 0.7,
+      "nms_threshold": 0.7,
+      "mAP": 0.5877399335513719,
+      "micro_precision": 0.3093363329583802,
+      "micro_recall": 0.6803562592775854,
+      "f1": 0.42530157748221464,
+      "num_predictions": 4445
+    }
+  ]
+}

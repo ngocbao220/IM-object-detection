@@ -1,0 +1,56 @@
+{
+  "mAP@0.5": 0.808961,
+  "performance_points": 20,
+  "iou_threshold": 0.5,
+  "num_ground_truth_boxes": 2021,
+  "num_predictions": 150000,
+  "micro_precision": 0.012747,
+  "micro_recall": 0.946066,
+  "per_class": {
+    "person": {
+      "ap": 0.846954,
+      "num_ground_truth": 1074,
+      "num_predictions": 42688,
+      "true_positives": 1022,
+      "false_positives": 41666,
+      "recall": 0.951583,
+      "precision": 0.023941
+    },
+    "car": {
+      "ap": 0.833097,
+      "num_ground_truth": 283,
+      "num_predictions": 29137,
+      "true_positives": 272,
+      "false_positives": 28865,
+      "recall": 0.961131,
+      "precision": 0.009335
+    },
+    "dog": {
+      "ap": 0.842377,
+      "num_ground_truth": 206,
+      "num_predictions": 21068,
+      "true_positives": 196,
+      "false_positives": 20872,
+      "recall": 0.951456,
+      "precision": 0.009303
+    },
+    "cat": {
+      "ap": 0.908486,
+      "num_ground_truth": 176,
+      "num_predictions": 23922,
+      "true_positives": 170,
+      "false_positives": 23752,
+      "recall": 0.965909,
+      "precision": 0.007106
+    },
+    "chair": {
+      "ap": 0.613888,
+      "num_ground_truth": 282,
+      "num_predictions": 33185,
+      "true_positives": 252,
+      "false_positives": 32933,
+      "recall": 0.893617,
+      "precision": 0.007594
+    }
+  }
+}
