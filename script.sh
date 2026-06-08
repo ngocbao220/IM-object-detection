@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
+export CUDA_VISIBLE_DEVICES=0,1
 # Usage:
 #   bash script.sh install
 #   bash script.sh download
@@ -125,7 +125,7 @@ NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
 # =========================
 # 7. Runtime/Logging
 # =========================
-GPU="${GPU:-}"
+GPU="${GPU:-1}"
 GPUS="${GPUS:-}"
 USE_WANDB="${USE_WANDB:-1}"
 LOG_INTERVAL="${LOG_INTERVAL:-20}"
@@ -347,6 +347,61 @@ predict() {
   python predict.py "${predict_args[@]}"
 }
 
+predict_raw() {
+  resolved_model_impl="${MODEL_IMPL}"
+  if [[ -z "${resolved_model_impl}" ]]; then
+    if [[ "${CUSTOM_MODEL}" == "1" ]]; then
+      resolved_model_impl="custom"
+    else
+      resolved_model_impl="torchvision"
+    fi
+  fi
+
+  raw_score_threshold="${RAW_SCORE_THRESHOLD:-0.0}"
+  raw_nms_threshold="${RAW_NMS_THRESHOLD:-0.99}"
+  raw_retina_max_detections="${RAW_RETINA_MAX_DETECTIONS:-1000}"
+  raw_retina_topk_candidates="${RAW_RETINA_TOPK_CANDIDATES:-2000}"
+
+  echo "============ Raw Prediction Export ============"
+  echo "image_dir: ${PREDICT_IMAGE_DIR}"
+  echo "checkpoint: ${CHECKPOINT}"
+  echo "output: ${RAW_PREDICTIONS_OUTPUT}"
+  echo "model_impl: ${resolved_model_impl}"
+  echo "score_threshold: ${raw_score_threshold}"
+  echo "nms_threshold: ${raw_nms_threshold}"
+  echo "retina_topk_candidates: ${raw_retina_topk_candidates}"
+  echo "retina_max_detections: ${raw_retina_max_detections}"
+  echo "==============================================="
+
+  predict_args=(
+    --image_dir "${PREDICT_IMAGE_DIR}"
+    --output "${RAW_PREDICTIONS_OUTPUT}"
+    --checkpoint "${CHECKPOINT}"
+    --score_threshold "${raw_score_threshold}"
+    --nms_threshold "${raw_nms_threshold}"
+    --model_impl "${resolved_model_impl}"
+    --backbone "${BACKBONE}"
+    --min_size "${MIN_SIZE}"
+    --max_size "${MAX_SIZE}"
+    --retina_topk_candidates "${raw_retina_topk_candidates}"
+    --retina_max_detections "${raw_retina_max_detections}"
+  )
+
+  if [[ -n "${ANCHOR_SIZES}" ]]; then
+    predict_args+=(--anchor_sizes "${ANCHOR_SIZES}")
+  fi
+
+  if [[ -n "${ANCHOR_RATIOS}" ]]; then
+    predict_args+=(--anchor_ratios "${ANCHOR_RATIOS}")
+  fi
+
+  if [[ "${CUSTOM_MODEL}" == "1" ]]; then
+    predict_args+=(--custom)
+  fi
+
+  python predict.py "${predict_args[@]}"
+}
+
 evaluate() {
   echo "============ Prediction Evaluation ============"
   echo "ground_truth: ${VAL_DATA}"
@@ -438,6 +493,9 @@ case "${1:-help}" in
     ;;
   predict)
     predict
+    ;;
+  predict-raw)
+    predict_raw
     ;;
   evaluate)
     evaluate
