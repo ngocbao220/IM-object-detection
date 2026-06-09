@@ -1,0 +1,6 @@
+class,gt_objects,false_negative,false_positive,wrong_class,poor_localization,duplicate_boxes,fn_rate
+chair,282,98,112,27,17,7,0.3475177304964539
+car,283,53,73,4,11,8,0.1872791519434629
+person,1074,200,143,9,72,19,0.186219739292365
+dog,206,26,40,23,9,6,0.1262135922330097
+cat,176,19,18,15,4,3,0.10795454545454546
