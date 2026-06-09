@@ -1,0 +1,10 @@
+{
+  "ownerSlug": "ngocbaotrinhtuan",
+  "title": "Object Detection Checkpoints",
+  "slug": "object-detection-checkpoints",
+  "subtitle": "PyTorch checkpoints for object detection experiments",
+  "isPrivate": true,
+  "description": "# Model Summary\n\nObject detection checkpoint collection for this project.\n\n# Model Characteristics\n\nThis Kaggle Model stores PyTorch checkpoint files exported from `saved_results/<run_name>/checkpoints`.\n\n# Data Overview\n\nDataset is managed separately from model checkpoints.\n\n# Evaluation Results\n\nSee each run folder and local `saved_results` logs/evaluation files for metrics.\n",
+  "publishTime": "",
+  "provenanceSources": ""
+}

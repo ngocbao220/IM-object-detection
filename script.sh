@@ -29,7 +29,7 @@ VAL_IMAGE_DIR="${VAL_IMAGE_DIR:-./public/val/images}"
 # 2. Run Outputs
 # =========================
 SAVED_RESULTS_DIR="${SAVED_RESULTS_DIR:-./saved_results}"
-WANDB_RUN_NAME="${WANDB_RUN_NAME:-custom-baseline}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-retina-augment-ablation}"
 RUN_RESULTS_DIR="${SAVED_RESULTS_DIR}/${WANDB_RUN_NAME}"
 
 CHECKPOINT="${CHECKPOINT:-${RUN_RESULTS_DIR}/checkpoints/best_model.pth}"
@@ -140,7 +140,10 @@ export PYTORCH_CUDA_ALLOC_CONF
 # =========================
 # 8. Experiment Suites
 # =========================
-ABLATION_RESULTS_DIR="${ABLATION_RESULTS_DIR:-./saved_results/augmentation_ablation}"
+ABLATION_MODEL_IMPL="${ABLATION_MODEL_IMPL:-retina}"
+ABLATION_BACKBONE="${ABLATION_BACKBONE:-${BACKBONE}}"
+ABLATION_RUN_PREFIX="${ABLATION_RUN_PREFIX:-${ABLATION_MODEL_IMPL}-}"
+ABLATION_RESULTS_DIR="${ABLATION_RESULTS_DIR:-./saved_results/augmentation_ablation/${ABLATION_MODEL_IMPL}}"
 ABLATION_EPOCHS="${ABLATION_EPOCHS:-30}"
 
 if [[ -n "${MODEL_IMPL}" ]]; then
@@ -454,29 +457,51 @@ run_augmentation_experiment() {
   flip_probability="$3"
   jitter_probability="$4"
   grayscale_probability="$5"
+  scale_probability="$6"
+  safe_crop_probability="$7"
+  blur_probability="$8"
+  noise_probability="$9"
+
+  ablation_custom_model=0
+  if [[ "${ABLATION_MODEL_IMPL}" == "custom" ]]; then
+    ablation_custom_model=1
+  fi
 
   echo "============================================================"
   echo "Running augmentation experiment: ${experiment_name}"
-  echo "augmentation=${augmentation} flip=${flip_probability} jitter=${jitter_probability} grayscale=${grayscale_probability}"
-  echo "results=${ABLATION_RESULTS_DIR}/${experiment_name}"
+  echo "model_impl=${ABLATION_MODEL_IMPL} backbone=${ABLATION_BACKBONE}"
+  echo "augmentation=${augmentation}"
+  echo "flip=${flip_probability} jitter=${jitter_probability} grayscale=${grayscale_probability}"
+  echo "scale=${scale_probability} safe_crop=${safe_crop_probability} blur=${blur_probability} noise=${noise_probability}"
+  echo "results=${ABLATION_RESULTS_DIR}/${ABLATION_RUN_PREFIX}${experiment_name}"
   echo "============================================================"
 
   SAVED_RESULTS_DIR="${ABLATION_RESULTS_DIR}" \
+  MODEL_IMPL="${ABLATION_MODEL_IMPL}" \
+  CUSTOM_MODEL="${ablation_custom_model}" \
+  BACKBONE="${ABLATION_BACKBONE}" \
   EPOCHS="${ABLATION_EPOCHS}" \
   AUGMENTATION="${augmentation}" \
   HORIZONTAL_FLIP_PROBABILITY="${flip_probability}" \
   COLOR_JITTER_PROBABILITY="${jitter_probability}" \
   GRAYSCALE_PROBABILITY="${grayscale_probability}" \
-  WANDB_RUN_NAME="${experiment_name}" \
+  SCALE_JITTER_PROBABILITY="${scale_probability}" \
+  SAFE_CROP_PROBABILITY="${safe_crop_probability}" \
+  BLUR_PROBABILITY="${blur_probability}" \
+  NOISE_PROBABILITY="${noise_probability}" \
+  WANDB_RUN_NAME="${ABLATION_RUN_PREFIX}${experiment_name}" \
   train
 }
 
 augment_ablation() {
-  run_augmentation_experiment "00_no_augmentation" 0 0.0 0.0 0.0
-  run_augmentation_experiment "01_horizontal_flip" 1 0.5 0.0 0.0
-  run_augmentation_experiment "02_color_jitter" 1 0.0 0.3 0.0
-  run_augmentation_experiment "03_grayscale" 1 0.0 0.0 0.05
-  run_augmentation_experiment "04_all_augmentations" 1 0.5 0.3 0.05
+  run_augmentation_experiment "00_no_augmentation" 0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+  run_augmentation_experiment "01_horizontal_flip" 1 0.5 0.0 0.0 0.0 0.0 0.0 0.0
+  run_augmentation_experiment "02_color_jitter" 1 0.0 0.3 0.0 0.0 0.0 0.0 0.0
+  run_augmentation_experiment "03_grayscale" 1 0.0 0.0 0.05 0.0 0.0 0.0 0.0
+  run_augmentation_experiment "04_scale_jitter" 1 0.0 0.0 0.0 0.4 0.0 0.0 0.0
+  run_augmentation_experiment "05_safe_crop" 1 0.0 0.0 0.0 0.0 0.2 0.0 0.0
+  run_augmentation_experiment "06_blur_noise" 1 0.0 0.0 0.0 0.0 0.0 0.08 0.08
+  run_augmentation_experiment "07_all_augmentations" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08
   summarize_augmentation_ablation
 }
 
