@@ -3760,3 +3760,191 @@ Epoch [27/100]
 [2026-06-09 13:36:53] Epoch 28 train batch [1000/1875] loss=0.2067 avg_loss=0.2005. Resources: rss=2296.9MB, peak_rss=2377.4MB, cuda_alloc=417.3MB, cuda_reserved=27300.0MB, cuda_peak_alloc=2602.1MB, cuda_free=20667.8MB, cuda_total=48519.1MB
 [2026-06-09 13:37:15] Epoch 28 train batch [1020/1875] loss=0.1974 avg_loss=0.2007. Resources: rss=2278.8MB, peak_rss=2377.4MB, cuda_alloc=417.3MB, cuda_reserved=27302.0MB, cuda_peak_alloc=2602.1MB, cuda_free=20665.8MB, cuda_total=48519.1MB
 [2026-06-09 13:37:37] Epoch 28 train batch [1040/1875] loss=0.2120 avg_loss=0.2001. Resources: rss=2307.6MB, peak_rss=2377.4MB, cuda_alloc=417.3MB, cuda_reserved=27302.0MB, cuda_peak_alloc=2602.1MB, cuda_free=20665.8MB, cuda_total=48519.1MB
+========== Training Session ==========
+Started: 20260610-161705
+Run name: yolo-baseline
+Device: cuda:0
+CUDA: NVIDIA GeForce RTX 4090 (47.38 GB)
+Torch: 2.7.1+cu126
+Classes: person, car, dog, cat, chair
+Train dataset: 7500 images, 10642 boxes, 2500 empty images
+Val dataset: 1500 images, 2021 boxes, 500 empty images
+Train class counts: {'dog': 1028, 'person': 5829, 'chair': 1613, 'cat': 833, 'car': 1339}
+Val class counts: {'dog': 206, 'chair': 282, 'person': 1074, 'car': 283, 'cat': 176}
+Resume: disabled
+Sampling: strategy=class_small_balanced, class=None, factor=1.0, target_images=0/7500, small_object_images=644, weight_range=[0.500, 3.968]
+Model: yolo resnet50 (26,595,358/28,040,286 trainable/total params)
+Hyperparameters
+├── Training
+│   ├── epochs             : 100
+│   ├── batch_size         : 4
+│   ├── num_workers        : 0
+│   ├── augmentation       : False
+│   ├── flip_probability   : 0.5
+│   ├── color_probability  : 0.2
+│   ├── grayscale_prob     : 0.03
+│   ├── scale_jitter_prob  : 0.4
+│   ├── scale_jitter_range : [0.9, 1.15]
+│   ├── safe_crop_prob     : 0.2
+│   ├── safe_crop_scale    : 0.75
+│   ├── safe_crop_visible  : 0.5
+│   ├── blur_probability   : 0.08
+│   ├── blur_kernel_size   : 5
+│   ├── noise_probability  : 0.08
+│   ├── noise_std          : 0.02 
+│   ├── sampler_strategy   : class_small_balanced
+│   ├── small_object_boost : 1.5
+│   ├── empty_image_weight : 0.5
+│   ├── oversample_class   : disabled
+│   └── oversample_factor  : 1.0
+├── Optimizer
+│   ├── lr                 : 0.0005
+│   ├── momentum           : 0.9
+│   ├── weight_decay       : 0.001
+│   └── grad_clip_norm     : 10.0
+├── LR Scheduler
+│   ├── type               : plateau
+│   ├── milestones         : [15, 25]
+│   ├── gamma              : 0.1
+│   ├── min_lr             : 1e-05
+│   ├── plateau_patience   : 3
+│   └── plateau_factor     : 0.5
+├── Model
+│   ├── implementation     : yolo
+│   ├── backbone           : resnet50
+│   ├── trainable_layers   : 2
+│   ├── pretrained_backbone: True
+│   ├── roi_dropout        : 0.2
+│   ├── retina_topk       : 1000
+│   ├── retina_max_det    : 300
+│   ├── yolo_topk         : 1000
+│   ├── yolo_max_det      : 300
+│   ├── min_size           : 512
+│   ├── max_size           : 768
+│   ├── anchor_sizes       : model_default
+│   ├── anchor_ratios      : model_default
+│   ├── train_pre_nms_top_n : 2000
+│   ├── train_post_nms_top_n: 2000
+│   ├── test_pre_nms_top_n  : 1000
+│   ├── test_post_nms_top_n : 1000
+│   └── fixed_batch_shape   : False
+├── Validation
+│   ├── score_threshold    : 0.5
+│   ├── eval_max_images    : all
+│   └── full_coco_interval : disabled
+├── Early Stopping
+│   ├── enabled            : True
+│   ├── patience           : 10
+│   └── min_delta          : 0.01
+└── Logging
+    ├── log_interval       : 20
+    ├── empty_cache_interval: disabled
+    └── use_wandb          : True
+Saved results dir: saved_results/yolo-baseline
+Checkpoint dir: saved_results/yolo-baseline/checkpoints
+Best checkpoint: saved_results/yolo-baseline/checkpoints/best_model-20260610-161705.pth
+Last checkpoint: saved_results/yolo-baseline/checkpoints/last_model-20260610-161705.pth
+Log dir: saved_results/yolo-baseline/logs
+=====================================
+[2026-06-10 16:17:05] Training session initialized.
+[2026-06-10 16:17:07] Epoch [01/100] started. Resources: rss=771.0MB, peak_rss=818.4MB, cuda_alloc=107.2MB, cuda_reserved=120.0MB, cuda_peak_alloc=107.2MB, cuda_free=47920.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:09] Epoch 01 train batch [20/1875] loss=3.0360 avg_loss=3.0694. Resources: rss=1712.6MB, peak_rss=1712.6MB, cuda_alloc=310.1MB, cuda_reserved=38042.0MB, cuda_peak_alloc=2261.4MB, cuda_free=9926.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:11] Epoch 01 train batch [40/1875] loss=3.2768 avg_loss=3.0323. Resources: rss=1730.4MB, peak_rss=1730.4MB, cuda_alloc=310.1MB, cuda_reserved=16562.0MB, cuda_peak_alloc=2493.3MB, cuda_free=31406.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:13] Epoch 01 train batch [60/1875] loss=3.1047 avg_loss=3.0003. Resources: rss=1733.4MB, peak_rss=1733.4MB, cuda_alloc=310.1MB, cuda_reserved=18282.0MB, cuda_peak_alloc=2493.3MB, cuda_free=29686.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:14] Epoch 01 train batch [80/1875] loss=2.7886 avg_loss=2.9820. Resources: rss=1736.4MB, peak_rss=1736.4MB, cuda_alloc=310.1MB, cuda_reserved=26382.0MB, cuda_peak_alloc=2493.7MB, cuda_free=21586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:15] Epoch 01 train batch [100/1875] loss=3.2686 avg_loss=2.9711. Resources: rss=1737.4MB, peak_rss=1737.4MB, cuda_alloc=310.1MB, cuda_reserved=26382.0MB, cuda_peak_alloc=2494.0MB, cuda_free=21586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:17] Epoch 01 train batch [120/1875] loss=2.7557 avg_loss=2.9582. Resources: rss=1737.9MB, peak_rss=1737.9MB, cuda_alloc=310.1MB, cuda_reserved=26382.0MB, cuda_peak_alloc=2494.0MB, cuda_free=21586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:18] Epoch 01 train batch [140/1875] loss=3.1703 avg_loss=2.9533. Resources: rss=1738.6MB, peak_rss=1738.6MB, cuda_alloc=310.1MB, cuda_reserved=26382.0MB, cuda_peak_alloc=2494.0MB, cuda_free=21586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:20] Epoch 01 train batch [160/1875] loss=2.6945 avg_loss=2.9513. Resources: rss=1743.4MB, peak_rss=1743.4MB, cuda_alloc=310.1MB, cuda_reserved=26382.0MB, cuda_peak_alloc=2494.0MB, cuda_free=21586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:21] Epoch 01 train batch [180/1875] loss=2.5576 avg_loss=2.9252. Resources: rss=1744.4MB, peak_rss=1744.4MB, cuda_alloc=310.1MB, cuda_reserved=26382.0MB, cuda_peak_alloc=2494.0MB, cuda_free=21586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:22] Epoch 01 train batch [200/1875] loss=2.9897 avg_loss=2.9179. Resources: rss=1751.4MB, peak_rss=1751.4MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:24] Epoch 01 train batch [220/1875] loss=3.0584 avg_loss=2.9055. Resources: rss=1758.6MB, peak_rss=1758.6MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:25] Epoch 01 train batch [240/1875] loss=2.7660 avg_loss=2.9025. Resources: rss=1759.6MB, peak_rss=1759.6MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:27] Epoch 01 train batch [260/1875] loss=2.6119 avg_loss=2.8979. Resources: rss=1761.1MB, peak_rss=1761.1MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:28] Epoch 01 train batch [280/1875] loss=2.1899 avg_loss=2.8869. Resources: rss=1762.1MB, peak_rss=1762.1MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:30] Epoch 01 train batch [300/1875] loss=2.5875 avg_loss=2.8588. Resources: rss=1765.4MB, peak_rss=1765.4MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:31] Epoch 01 train batch [320/1875] loss=2.2996 avg_loss=2.8360. Resources: rss=1768.6MB, peak_rss=1768.6MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:32] Epoch 01 train batch [340/1875] loss=2.2715 avg_loss=2.8047. Resources: rss=1768.6MB, peak_rss=1768.6MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:34] Epoch 01 train batch [360/1875] loss=2.4984 avg_loss=2.7789. Resources: rss=1769.4MB, peak_rss=1769.4MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:35] Epoch 01 train batch [380/1875] loss=2.2032 avg_loss=2.7501. Resources: rss=1771.9MB, peak_rss=1771.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:37] Epoch 01 train batch [400/1875] loss=1.9768 avg_loss=2.7205. Resources: rss=1772.4MB, peak_rss=1772.4MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:38] Epoch 01 train batch [420/1875] loss=1.9269 avg_loss=2.6967. Resources: rss=1772.9MB, peak_rss=1772.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:39] Epoch 01 train batch [440/1875] loss=2.0488 avg_loss=2.6747. Resources: rss=1775.9MB, peak_rss=1775.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:41] Epoch 01 train batch [460/1875] loss=2.0178 avg_loss=2.6506. Resources: rss=1779.4MB, peak_rss=1779.4MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:42] Epoch 01 train batch [480/1875] loss=2.2122 avg_loss=2.6265. Resources: rss=1785.4MB, peak_rss=1785.4MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:44] Epoch 01 train batch [500/1875] loss=2.0277 avg_loss=2.6066. Resources: rss=1785.4MB, peak_rss=1785.4MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:45] Epoch 01 train batch [520/1875] loss=2.1775 avg_loss=2.5881. Resources: rss=1788.4MB, peak_rss=1788.4MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:46] Epoch 01 train batch [540/1875] loss=2.2426 avg_loss=2.5696. Resources: rss=1790.6MB, peak_rss=1790.6MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:48] Epoch 01 train batch [560/1875] loss=2.2481 avg_loss=2.5496. Resources: rss=1793.1MB, peak_rss=1793.1MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:49] Epoch 01 train batch [580/1875] loss=2.1451 avg_loss=2.5329. Resources: rss=1795.6MB, peak_rss=1795.6MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:51] Epoch 01 train batch [600/1875] loss=2.6947 avg_loss=2.5127. Resources: rss=1796.9MB, peak_rss=1796.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:52] Epoch 01 train batch [620/1875] loss=2.0781 avg_loss=2.4923. Resources: rss=1796.9MB, peak_rss=1796.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:54] Epoch 01 train batch [640/1875] loss=1.8220 avg_loss=2.4709. Resources: rss=1796.9MB, peak_rss=1796.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:55] Epoch 01 train batch [660/1875] loss=1.2288 avg_loss=2.4465. Resources: rss=1799.9MB, peak_rss=1799.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.0MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:56] Epoch 01 train batch [680/1875] loss=1.7649 avg_loss=2.4284. Resources: rss=1799.9MB, peak_rss=1799.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:58] Epoch 01 train batch [700/1875] loss=2.4237 avg_loss=2.4100. Resources: rss=1799.9MB, peak_rss=1799.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:17:59] Epoch 01 train batch [720/1875] loss=1.9189 avg_loss=2.3932. Resources: rss=1800.6MB, peak_rss=1800.6MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:01] Epoch 01 train batch [740/1875] loss=1.5353 avg_loss=2.3751. Resources: rss=1800.9MB, peak_rss=1800.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:02] Epoch 01 train batch [760/1875] loss=0.7960 avg_loss=2.3528. Resources: rss=1800.9MB, peak_rss=1800.9MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:03] Epoch 01 train batch [780/1875] loss=1.5071 avg_loss=2.3334. Resources: rss=1797.4MB, peak_rss=1801.6MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:05] Epoch 01 train batch [800/1875] loss=1.5421 avg_loss=2.3110. Resources: rss=1798.6MB, peak_rss=1801.6MB, cuda_alloc=310.1MB, cuda_reserved=32582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=15386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:06] Epoch 01 train batch [820/1875] loss=1.7652 avg_loss=2.2904. Resources: rss=1804.1MB, peak_rss=1804.1MB, cuda_alloc=310.1MB, cuda_reserved=36142.0MB, cuda_peak_alloc=2494.1MB, cuda_free=11826.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:08] Epoch 01 train batch [840/1875] loss=1.3522 avg_loss=2.2730. Resources: rss=1805.1MB, peak_rss=1805.1MB, cuda_alloc=310.1MB, cuda_reserved=36142.0MB, cuda_peak_alloc=2494.1MB, cuda_free=11826.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:09] Epoch 01 train batch [860/1875] loss=1.4181 avg_loss=2.2578. Resources: rss=1808.9MB, peak_rss=1808.9MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:10] Epoch 01 train batch [880/1875] loss=1.4263 avg_loss=2.2428. Resources: rss=1808.9MB, peak_rss=1808.9MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:12] Epoch 01 train batch [900/1875] loss=1.4190 avg_loss=2.2253. Resources: rss=1808.9MB, peak_rss=1808.9MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:13] Epoch 01 train batch [920/1875] loss=1.1940 avg_loss=2.2072. Resources: rss=1811.1MB, peak_rss=1811.1MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:15] Epoch 01 train batch [940/1875] loss=1.3316 avg_loss=2.1937. Resources: rss=1811.9MB, peak_rss=1811.9MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:16] Epoch 01 train batch [960/1875] loss=1.5351 avg_loss=2.1799. Resources: rss=1811.9MB, peak_rss=1811.9MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:17] Epoch 01 train batch [980/1875] loss=1.3470 avg_loss=2.1667. Resources: rss=1812.6MB, peak_rss=1812.6MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:19] Epoch 01 train batch [1000/1875] loss=0.9545 avg_loss=2.1516. Resources: rss=1812.6MB, peak_rss=1812.6MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:20] Epoch 01 train batch [1020/1875] loss=1.1345 avg_loss=2.1360. Resources: rss=1813.4MB, peak_rss=1813.4MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:21] Epoch 01 train batch [1040/1875] loss=1.4953 avg_loss=2.1228. Resources: rss=1813.4MB, peak_rss=1813.4MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:23] Epoch 01 train batch [1060/1875] loss=1.9822 avg_loss=2.1088. Resources: rss=1813.4MB, peak_rss=1813.4MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:24] Epoch 01 train batch [1080/1875] loss=1.1962 avg_loss=2.0941. Resources: rss=1814.1MB, peak_rss=1814.1MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:26] Epoch 01 train batch [1100/1875] loss=1.2456 avg_loss=2.0800. Resources: rss=1820.6MB, peak_rss=1820.6MB, cuda_alloc=310.1MB, cuda_reserved=40242.0MB, cuda_peak_alloc=2494.1MB, cuda_free=7726.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:28] Epoch 01 train batch [1120/1875] loss=1.6880 avg_loss=2.0667. Resources: rss=1823.6MB, peak_rss=1823.6MB, cuda_alloc=310.1MB, cuda_reserved=3542.0MB, cuda_peak_alloc=2494.1MB, cuda_free=44426.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:29] Epoch 01 train batch [1140/1875] loss=1.2771 avg_loss=2.0519. Resources: rss=1821.0MB, peak_rss=1826.2MB, cuda_alloc=310.1MB, cuda_reserved=14042.0MB, cuda_peak_alloc=2494.1MB, cuda_free=33926.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:31] Epoch 01 train batch [1160/1875] loss=0.5781 avg_loss=2.0368. Resources: rss=1821.0MB, peak_rss=1826.2MB, cuda_alloc=310.1MB, cuda_reserved=14042.0MB, cuda_peak_alloc=2494.1MB, cuda_free=33926.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:32] Epoch 01 train batch [1180/1875] loss=1.0335 avg_loss=2.0221. Resources: rss=1821.0MB, peak_rss=1826.2MB, cuda_alloc=310.1MB, cuda_reserved=14682.0MB, cuda_peak_alloc=2494.1MB, cuda_free=33286.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:33] Epoch 01 train batch [1200/1875] loss=1.0043 avg_loss=2.0123. Resources: rss=1811.0MB, peak_rss=1826.2MB, cuda_alloc=310.1MB, cuda_reserved=18622.0MB, cuda_peak_alloc=2494.1MB, cuda_free=29346.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:35] Epoch 01 train batch [1220/1875] loss=1.4825 avg_loss=2.0001. Resources: rss=1820.0MB, peak_rss=1826.2MB, cuda_alloc=310.1MB, cuda_reserved=18622.0MB, cuda_peak_alloc=2494.1MB, cuda_free=29346.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:36] Epoch 01 train batch [1240/1875] loss=0.9570 avg_loss=1.9886. Resources: rss=1820.0MB, peak_rss=1826.2MB, cuda_alloc=310.1MB, cuda_reserved=19902.0MB, cuda_peak_alloc=2494.1MB, cuda_free=28066.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:38] Epoch 01 train batch [1260/1875] loss=1.0465 avg_loss=1.9761. Resources: rss=1820.0MB, peak_rss=1826.2MB, cuda_alloc=310.1MB, cuda_reserved=19902.0MB, cuda_peak_alloc=2494.1MB, cuda_free=28066.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:39] Epoch 01 train batch [1280/1875] loss=0.9306 avg_loss=1.9631. Resources: rss=1823.5MB, peak_rss=1826.2MB, cuda_alloc=310.1MB, cuda_reserved=19902.0MB, cuda_peak_alloc=2494.1MB, cuda_free=28066.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:40] Epoch 01 train batch [1300/1875] loss=1.5410 avg_loss=1.9518. Resources: rss=1818.8MB, peak_rss=1826.5MB, cuda_alloc=310.1MB, cuda_reserved=19902.0MB, cuda_peak_alloc=2494.1MB, cuda_free=28066.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:42] Epoch 01 train batch [1320/1875] loss=1.2785 avg_loss=1.9411. Resources: rss=1815.6MB, peak_rss=1827.7MB, cuda_alloc=310.1MB, cuda_reserved=19902.0MB, cuda_peak_alloc=2494.1MB, cuda_free=28066.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:43] Epoch 01 train batch [1340/1875] loss=1.2669 avg_loss=1.9309. Resources: rss=1817.0MB, peak_rss=1828.1MB, cuda_alloc=310.1MB, cuda_reserved=19902.0MB, cuda_peak_alloc=2494.1MB, cuda_free=28066.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:45] Epoch 01 train batch [1360/1875] loss=1.0848 avg_loss=1.9200. Resources: rss=1823.0MB, peak_rss=1828.1MB, cuda_alloc=310.1MB, cuda_reserved=19902.0MB, cuda_peak_alloc=2494.1MB, cuda_free=28066.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:46] Epoch 01 train batch [1380/1875] loss=1.2932 avg_loss=1.9084. Resources: rss=1820.1MB, peak_rss=1828.1MB, cuda_alloc=310.1MB, cuda_reserved=24382.0MB, cuda_peak_alloc=2494.1MB, cuda_free=23586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:47] Epoch 01 train batch [1400/1875] loss=1.1877 avg_loss=1.8992. Resources: rss=1823.6MB, peak_rss=1828.1MB, cuda_alloc=310.1MB, cuda_reserved=24382.0MB, cuda_peak_alloc=2494.1MB, cuda_free=23586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:49] Epoch 01 train batch [1420/1875] loss=0.9391 avg_loss=1.8888. Resources: rss=1823.6MB, peak_rss=1828.1MB, cuda_alloc=310.1MB, cuda_reserved=24382.0MB, cuda_peak_alloc=2494.1MB, cuda_free=23586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:50] Epoch 01 train batch [1440/1875] loss=0.7128 avg_loss=1.8792. Resources: rss=1823.6MB, peak_rss=1828.1MB, cuda_alloc=310.1MB, cuda_reserved=24382.0MB, cuda_peak_alloc=2494.1MB, cuda_free=23586.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:51] Epoch 01 train batch [1460/1875] loss=1.2039 avg_loss=1.8690. Resources: rss=1827.5MB, peak_rss=1828.4MB, cuda_alloc=310.1MB, cuda_reserved=27582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=20386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:53] Epoch 01 train batch [1480/1875] loss=1.1978 avg_loss=1.8604. Resources: rss=1823.8MB, peak_rss=1828.4MB, cuda_alloc=310.1MB, cuda_reserved=27582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=20386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:54] Epoch 01 train batch [1500/1875] loss=0.9894 avg_loss=1.8490. Resources: rss=1819.8MB, peak_rss=1829.0MB, cuda_alloc=310.1MB, cuda_reserved=27582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=20386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:56] Epoch 01 train batch [1520/1875] loss=1.3978 avg_loss=1.8402. Resources: rss=1816.8MB, peak_rss=1829.0MB, cuda_alloc=310.1MB, cuda_reserved=27582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=20386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:57] Epoch 01 train batch [1540/1875] loss=1.0192 avg_loss=1.8313. Resources: rss=1819.5MB, peak_rss=1829.0MB, cuda_alloc=310.1MB, cuda_reserved=27582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=20386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:18:58] Epoch 01 train batch [1560/1875] loss=1.0225 avg_loss=1.8230. Resources: rss=1819.7MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=27582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=20386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:00] Epoch 01 train batch [1580/1875] loss=0.6006 avg_loss=1.8135. Resources: rss=1821.5MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=27582.0MB, cuda_peak_alloc=2494.1MB, cuda_free=20386.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:01] Epoch 01 train batch [1600/1875] loss=0.7934 avg_loss=1.8022. Resources: rss=1822.0MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=29642.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18326.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:03] Epoch 01 train batch [1620/1875] loss=1.1687 avg_loss=1.7938. Resources: rss=1822.0MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=29642.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18326.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:04] Epoch 01 train batch [1640/1875] loss=1.2667 avg_loss=1.7855. Resources: rss=1818.7MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=29642.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18326.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:05] Epoch 01 train batch [1660/1875] loss=1.2256 avg_loss=1.7769. Resources: rss=1821.9MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=29644.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18324.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:07] Epoch 01 train batch [1680/1875] loss=1.0445 avg_loss=1.7681. Resources: rss=1823.4MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=29644.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18324.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:08] Epoch 01 train batch [1700/1875] loss=0.8234 avg_loss=1.7600. Resources: rss=1818.7MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:10] Epoch 01 train batch [1720/1875] loss=1.1647 avg_loss=1.7505. Resources: rss=1827.0MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:11] Epoch 01 train batch [1740/1875] loss=0.9874 avg_loss=1.7432. Resources: rss=1819.4MB, peak_rss=1829.6MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:12] Epoch 01 train batch [1760/1875] loss=1.3930 avg_loss=1.7340. Resources: rss=1832.4MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:14] Epoch 01 train batch [1780/1875] loss=0.8287 avg_loss=1.7259. Resources: rss=1821.5MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:15] Epoch 01 train batch [1800/1875] loss=0.9700 avg_loss=1.7182. Resources: rss=1827.1MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:17] Epoch 01 train batch [1820/1875] loss=0.8709 avg_loss=1.7103. Resources: rss=1822.6MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:18] Epoch 01 train batch [1840/1875] loss=1.5160 avg_loss=1.7032. Resources: rss=1822.6MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:19] Epoch 01 train batch [1860/1875] loss=0.8911 avg_loss=1.6962. Resources: rss=1812.1MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:20] Epoch 01 train batch [1875/1875] loss=0.7311 avg_loss=1.6901. Resources: rss=1820.1MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:20] Epoch 01 training completed. Resources: rss=1820.1MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=29964.0MB, cuda_peak_alloc=2494.1MB, cuda_free=18004.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:21] Epoch 01 cache released before validation loss. Resources: rss=1770.0MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=448.0MB, cuda_peak_alloc=310.1MB, cuda_free=47520.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:34] Epoch 01 validation loss completed: 0.9768. Resources: rss=1805.2MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=4960.0MB, cuda_peak_alloc=1384.9MB, cuda_free=43008.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:34] Epoch 01 cache released before detection metrics. Resources: rss=1768.4MB, peak_rss=1832.4MB, cuda_alloc=310.1MB, cuda_reserved=448.0MB, cuda_peak_alloc=310.1MB, cuda_free=47520.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:49] Epoch 01 prediction tensors moved to CPU. Computing metrics. Resources: rss=1895.8MB, peak_rss=1937.2MB, cuda_alloc=310.1MB, cuda_reserved=448.0MB, cuda_peak_alloc=310.1MB, cuda_free=47518.9MB, cuda_total=48519.1MB
+[2026-06-10 16:19:49] Epoch 01 metrics computed (mAP@0.5 only). Saving artifacts. Resources: rss=1907.3MB, peak_rss=1937.2MB, cuda_alloc=310.1MB, cuda_reserved=448.0MB, cuda_peak_alloc=310.1MB, cuda_free=47518.9MB, cuda_total=48519.1MB

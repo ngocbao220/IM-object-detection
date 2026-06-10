@@ -1,0 +1,268 @@
+========== Training Session ==========
+Started: 20260611-012735
+Run name: retina-resnet101-fpn
+Device: cuda:0
+CUDA: NVIDIA GeForce RTX 4090 (47.38 GB)
+Torch: 2.7.1+cu126
+Classes: person, car, dog, cat, chair
+Train dataset: 7500 images, 10642 boxes, 2500 empty images
+Val dataset: 1500 images, 2021 boxes, 500 empty images
+Train class counts: {'dog': 1028, 'person': 5829, 'chair': 1613, 'cat': 833, 'car': 1339}
+Val class counts: {'dog': 206, 'chair': 282, 'person': 1074, 'car': 283, 'cat': 176}
+Resume: disabled
+Sampling: strategy=class_small_balanced, class=None, factor=1.0, target_images=0/7500, small_object_images=644, weight_range=[0.500, 3.968]
+Model: retina resnet101 (49,182,491/50,627,419 trainable/total params)
+Hyperparameters
+├── Training
+│   ├── epochs             : 100
+│   ├── batch_size         : 4
+│   ├── num_workers        : 0
+│   ├── augmentation       : True
+│   ├── flip_probability   : 0.5
+│   ├── color_probability  : 0.2
+│   ├── grayscale_prob     : 0.03
+│   ├── scale_jitter_prob  : 0.4
+│   ├── scale_jitter_range : [0.9, 1.15]
+│   ├── safe_crop_prob     : 0.2
+│   ├── safe_crop_scale    : 0.75
+│   ├── safe_crop_visible  : 0.5
+│   ├── blur_probability   : 0.08
+│   ├── blur_kernel_size   : 5
+│   ├── noise_probability  : 0.08
+│   ├── noise_std          : 0.02
+│   ├── sampler_strategy   : class_small_balanced
+│   ├── small_object_boost : 1.5
+│   ├── empty_image_weight : 0.5
+│   ├── oversample_class   : disabled
+│   └── oversample_factor  : 1.0
+├── Optimizer
+│   ├── lr                 : 0.001
+│   ├── momentum           : 0.9
+│   ├── weight_decay       : 0.001
+│   └── grad_clip_norm     : 10.0
+├── LR Scheduler
+│   ├── type               : plateau
+│   ├── milestones         : [15, 25]
+│   ├── gamma              : 0.1
+│   ├── min_lr             : 1e-05
+│   ├── plateau_patience   : 3
+│   └── plateau_factor     : 0.5
+├── Model
+│   ├── implementation     : retina
+│   ├── backbone           : resnet101
+│   ├── trainable_layers   : 2
+│   ├── pretrained_backbone: True
+│   ├── roi_dropout        : 0.2
+│   ├── retina_topk       : 2000
+│   ├── retina_max_det    : 300
+│   ├── yolo_topk         : 1000
+│   ├── yolo_max_det      : 300
+│   ├── min_size           : 512
+│   ├── max_size           : 768
+│   ├── anchor_sizes       : model_default
+│   ├── anchor_ratios      : model_default
+│   ├── train_pre_nms_top_n : 2000
+│   ├── train_post_nms_top_n: 2000
+│   ├── test_pre_nms_top_n  : 1000
+│   ├── test_post_nms_top_n : 1000
+│   └── fixed_batch_shape   : False
+├── Validation
+│   ├── score_threshold    : 0.05
+│   ├── eval_max_images    : all
+│   └── full_coco_interval : disabled
+├── Early Stopping
+│   ├── enabled            : True
+│   ├── patience           : 10
+│   └── min_delta          : 0.01
+└── Logging
+    ├── log_interval       : 20
+    ├── empty_cache_interval: disabled
+    └── use_wandb          : True
+Saved results dir: saved_results/retina-resnet101-fpn
+Checkpoint dir: saved_results/retina-resnet101-fpn/checkpoints
+Best checkpoint: saved_results/retina-resnet101-fpn/checkpoints/best_model-20260611-012735.pth
+Last checkpoint: saved_results/retina-resnet101-fpn/checkpoints/last_model-20260611-012735.pth
+Log dir: saved_results/retina-resnet101-fpn/logs
+=====================================
+[2026-06-11 01:27:37] Training session initialized.
+[2026-06-11 01:27:39] Epoch [01/100] started. Resources: rss=916.2MB, peak_rss=963.4MB, cuda_alloc=193.6MB, cuda_reserved=194.0MB, cuda_peak_alloc=193.6MB, cuda_free=41183.6MB, cuda_total=48519.1MB
+========== Training Session ==========
+Started: 20260611-012808
+Run name: retina-resnet101-fpn
+Device: cuda:1
+CUDA: NVIDIA GeForce RTX 4090 (47.38 GB)
+Torch: 2.7.1+cu126
+Classes: person, car, dog, cat, chair
+Train dataset: 7500 images, 10642 boxes, 2500 empty images
+Val dataset: 1500 images, 2021 boxes, 500 empty images
+Train class counts: {'dog': 1028, 'person': 5829, 'chair': 1613, 'cat': 833, 'car': 1339}
+Val class counts: {'dog': 206, 'chair': 282, 'person': 1074, 'car': 283, 'cat': 176}
+Resume: disabled
+Sampling: strategy=class_small_balanced, class=None, factor=1.0, target_images=0/7500, small_object_images=644, weight_range=[0.500, 3.968]
+Model: retina resnet101 (49,182,491/50,627,419 trainable/total params)
+Hyperparameters
+├── Training
+│   ├── epochs             : 100
+│   ├── batch_size         : 4
+│   ├── num_workers        : 0
+│   ├── augmentation       : True
+│   ├── flip_probability   : 0.5
+│   ├── color_probability  : 0.2
+│   ├── grayscale_prob     : 0.03
+│   ├── scale_jitter_prob  : 0.4
+│   ├── scale_jitter_range : [0.9, 1.15]
+│   ├── safe_crop_prob     : 0.2
+│   ├── safe_crop_scale    : 0.75
+│   ├── safe_crop_visible  : 0.5
+│   ├── blur_probability   : 0.08
+│   ├── blur_kernel_size   : 5
+│   ├── noise_probability  : 0.08
+│   ├── noise_std          : 0.02
+│   ├── sampler_strategy   : class_small_balanced
+│   ├── small_object_boost : 1.5
+│   ├── empty_image_weight : 0.5
+│   ├── oversample_class   : disabled
+│   └── oversample_factor  : 1.0
+├── Optimizer
+│   ├── lr                 : 0.001
+│   ├── momentum           : 0.9
+│   ├── weight_decay       : 0.001
+│   └── grad_clip_norm     : 10.0
+├── LR Scheduler
+│   ├── type               : plateau
+│   ├── milestones         : [15, 25]
+│   ├── gamma              : 0.1
+│   ├── min_lr             : 1e-05
+│   ├── plateau_patience   : 3
+│   └── plateau_factor     : 0.5
+├── Model
+│   ├── implementation     : retina
+│   ├── backbone           : resnet101
+│   ├── trainable_layers   : 2
+│   ├── pretrained_backbone: True
+│   ├── roi_dropout        : 0.2
+│   ├── retina_topk       : 2000
+│   ├── retina_max_det    : 300
+│   ├── yolo_topk         : 1000
+│   ├── yolo_max_det      : 300
+│   ├── min_size           : 512
+│   ├── max_size           : 768
+│   ├── anchor_sizes       : model_default
+│   ├── anchor_ratios      : model_default
+│   ├── train_pre_nms_top_n : 2000
+│   ├── train_post_nms_top_n: 2000
+│   ├── test_pre_nms_top_n  : 1000
+│   ├── test_post_nms_top_n : 1000
+│   └── fixed_batch_shape   : False
+├── Validation
+│   ├── score_threshold    : 0.05
+│   ├── eval_max_images    : all
+│   └── full_coco_interval : disabled
+├── Early Stopping
+│   ├── enabled            : True
+│   ├── patience           : 10
+│   └── min_delta          : 0.01
+└── Logging
+    ├── log_interval       : 20
+    ├── empty_cache_interval: disabled
+    └── use_wandb          : True
+Saved results dir: saved_results/retina-resnet101-fpn
+Checkpoint dir: saved_results/retina-resnet101-fpn/checkpoints
+Best checkpoint: saved_results/retina-resnet101-fpn/checkpoints/best_model-20260611-012808.pth
+Last checkpoint: saved_results/retina-resnet101-fpn/checkpoints/last_model-20260611-012808.pth
+Log dir: saved_results/retina-resnet101-fpn/logs
+=====================================
+[2026-06-11 01:28:10] Training session initialized.
+[2026-06-11 01:28:12] Epoch [01/100] started. Resources: rss=931.8MB, peak_rss=1050.1MB, cuda_alloc=193.6MB, cuda_reserved=194.0MB, cuda_peak_alloc=193.6MB, cuda_free=39574.8MB, cuda_total=48519.1MB
+[2026-06-11 01:28:34] Epoch 01 train batch [20/1875] loss=1.8216 avg_loss=1.8104. Resources: rss=1841.6MB, peak_rss=1861.0MB, cuda_alloc=568.8MB, cuda_reserved=5698.0MB, cuda_peak_alloc=5619.2MB, cuda_free=33998.8MB, cuda_total=48519.1MB
+[2026-06-11 01:28:53] Epoch 01 train batch [40/1875] loss=1.7830 avg_loss=1.7943. Resources: rss=1839.0MB, peak_rss=1862.1MB, cuda_alloc=568.8MB, cuda_reserved=26740.0MB, cuda_peak_alloc=5619.2MB, cuda_free=12956.8MB, cuda_total=48519.1MB
+[2026-06-11 01:29:22] Epoch 01 train batch [60/1875] loss=1.6687 avg_loss=1.7707. Resources: rss=1835.0MB, peak_rss=1878.2MB, cuda_alloc=568.8MB, cuda_reserved=14860.0MB, cuda_peak_alloc=5619.2MB, cuda_free=24836.8MB, cuda_total=48519.1MB
+========== Training Session ==========
+Started: 20260611-013004
+Run name: retina-resnet101-fpn
+Device: cuda:1
+CUDA: NVIDIA GeForce RTX 4090 (47.38 GB)
+Torch: 2.7.1+cu126
+Classes: person, car, dog, cat, chair
+Train dataset: 7500 images, 10642 boxes, 2500 empty images
+Val dataset: 1500 images, 2021 boxes, 500 empty images
+Train class counts: {'dog': 1028, 'person': 5829, 'chair': 1613, 'cat': 833, 'car': 1339}
+Val class counts: {'dog': 206, 'chair': 282, 'person': 1074, 'car': 283, 'cat': 176}
+Resume: disabled
+Sampling: disabled
+Model: retina resnet101 (49,182,491/50,627,419 trainable/total params)
+Hyperparameters
+├── Training
+│   ├── epochs             : 100
+│   ├── batch_size         : 4
+│   ├── num_workers        : 0
+│   ├── augmentation       : True
+│   ├── flip_probability   : 0.5
+│   ├── color_probability  : 0.2
+│   ├── grayscale_prob     : 0.03
+│   ├── scale_jitter_prob  : 0.4
+│   ├── scale_jitter_range : [0.9, 1.15]
+│   ├── safe_crop_prob     : 0.2
+│   ├── safe_crop_scale    : 0.75
+│   ├── safe_crop_visible  : 0.5
+│   ├── blur_probability   : 0.08
+│   ├── blur_kernel_size   : 5
+│   ├── noise_probability  : 0.08
+│   ├── noise_std          : 0.02
+│   ├── sampler_strategy   : none
+│   ├── small_object_boost : 1.5
+│   ├── empty_image_weight : 0.5
+│   ├── oversample_class   : disabled
+│   └── oversample_factor  : 1.0
+├── Optimizer
+│   ├── lr                 : 0.001
+│   ├── momentum           : 0.9
+│   ├── weight_decay       : 0.001
+│   └── grad_clip_norm     : 10.0
+├── LR Scheduler
+│   ├── type               : plateau
+│   ├── milestones         : [15, 25]
+│   ├── gamma              : 0.1
+│   ├── min_lr             : 1e-05
+│   ├── plateau_patience   : 3
+│   └── plateau_factor     : 0.5
+├── Model
+│   ├── implementation     : retina
+│   ├── backbone           : resnet101
+│   ├── trainable_layers   : 2
+│   ├── pretrained_backbone: True
+│   ├── roi_dropout        : 0.2
+│   ├── retina_topk       : 2000
+│   ├── retina_max_det    : 300
+│   ├── yolo_topk         : 1000
+│   ├── yolo_max_det      : 300
+│   ├── min_size           : 512
+│   ├── max_size           : 768
+│   ├── anchor_sizes       : model_default
+│   ├── anchor_ratios      : model_default
+│   ├── train_pre_nms_top_n : 2000
+│   ├── train_post_nms_top_n: 2000
+│   ├── test_pre_nms_top_n  : 1000
+│   ├── test_post_nms_top_n : 1000
+│   └── fixed_batch_shape   : False
+├── Validation
+│   ├── score_threshold    : 0.05
+│   ├── eval_max_images    : all
+│   └── full_coco_interval : disabled
+├── Early Stopping
+│   ├── enabled            : True
+│   ├── patience           : 10
+│   └── min_delta          : 0.01
+└── Logging
+    ├── log_interval       : 20
+    ├── empty_cache_interval: disabled
+    └── use_wandb          : True
+Saved results dir: saved_results/retina-resnet101-fpn
+Checkpoint dir: saved_results/retina-resnet101-fpn/checkpoints
+Best checkpoint: saved_results/retina-resnet101-fpn/checkpoints/best_model-20260611-013004.pth
+Last checkpoint: saved_results/retina-resnet101-fpn/checkpoints/last_model-20260611-013004.pth
+Log dir: saved_results/retina-resnet101-fpn/logs
+=====================================
+[2026-06-11 01:30:06] Training session initialized.
+[2026-06-11 01:30:08] Epoch [01/100] started. Resources: rss=931.3MB, peak_rss=1049.4MB, cuda_alloc=193.6MB, cuda_reserved=194.0MB, cuda_peak_alloc=193.6MB, cuda_free=39574.8MB, cuda_total=48519.1MB
+[2026-06-11 01:30:28] Epoch 01 train batch [20/1875] loss=1.6185 avg_loss=1.7883. Resources: rss=1849.0MB, peak_rss=1866.8MB, cuda_alloc=568.8MB, cuda_reserved=37558.0MB, cuda_peak_alloc=5618.8MB, cuda_free=2138.8MB, cuda_total=48519.1MB

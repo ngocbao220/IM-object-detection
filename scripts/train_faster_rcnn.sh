@@ -22,5 +22,5 @@ TEST_POST_NMS_TOP_N="${TEST_POST_NMS_TOP_N:-1000}" \
 SAMPLER_STRATEGY="${SAMPLER_STRATEGY:-class_small_balanced}" \
 AUGMENTATION="${AUGMENTATION:-1}" \
 USE_WANDB="${USE_WANDB:-1}" \
-GPU="${GPU:-0}" \
+GPU="${GPU:-1}" \
 bash script.sh train

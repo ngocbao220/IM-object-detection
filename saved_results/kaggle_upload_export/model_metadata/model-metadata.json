@@ -1,0 +1,10 @@
+{
+  "ownerSlug": "ngocbaotrinhtuan",
+  "title": "Object Detection Checkpoints",
+  "slug": "object-detection-checkpoints",
+  "subtitle": "PyTorch checkpoints for object detection experiments",
+  "isPrivate": true,
+  "description": "# Model Summary\n\nObject detection checkpoint collection.\n\n# Model Characteristics\n\nPyTorch checkpoints exported from saved_results/<run_name>/checkpoints.\n",
+  "publishTime": "",
+  "provenanceSources": ""
+}

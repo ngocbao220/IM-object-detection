@@ -1,0 +1,14 @@
+{
+  "ownerSlug": "ngocbaotrinhtuan",
+  "modelSlug": "object-detection-checkpoints",
+  "instanceSlug": "augmentation_ablation-retina-retina-00_no_augmentation",
+  "framework": "PyTorch",
+  "overview": "Checkpoint for augmentation_ablation/retina/retina-00_no_augmentation.",
+  "usage": "# Model Format\n\nPyTorch .pth checkpoint files.\n\n# Model Usage\n\nPlace files under saved_results/augmentation_ablation/retina/retina-00_no_augmentation/checkpoints/.\n",
+  "licenseName": "Apache 2.0",
+  "fineTunable": false,
+  "trainingData": [],
+  "modelInstanceType": "Unspecified",
+  "baseModelInstanceId": 0,
+  "externalBaseModelUrl": ""
+}

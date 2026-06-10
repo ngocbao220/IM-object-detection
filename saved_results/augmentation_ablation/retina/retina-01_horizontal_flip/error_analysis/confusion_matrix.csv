@@ -1,0 +1,7 @@
+gt_class,person,car,dog,cat,chair,missed
+person,851,0,3,1,3,216
+car,0,217,0,1,1,64
+dog,1,0,170,5,0,30
+cat,0,0,8,149,0,19
+chair,6,0,1,0,144,131
+background_fp,276,86,51,27,104,0

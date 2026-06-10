@@ -1,0 +1,6 @@
+error_type,raw_error_type,count
+false_negative,missed_detection,509
+false_positive,background_false_positive,300
+poor_localization,localization_error,144
+wrong_class,classification_error,60
+duplicate_boxes,duplicate_detection,50
