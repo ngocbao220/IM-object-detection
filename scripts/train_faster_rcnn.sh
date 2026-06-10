@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
+# Default is the repository custom Faster R-CNN. Override with
+# MODEL_IMPL=torchvision when you explicitly want the torchvision baseline.
+MODEL_IMPL="${MODEL_IMPL:-custom}" \
+BACKBONE="${BACKBONE:-resnet101}" \
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-faster-rcnn-resnet101-fpn}" \
+MIN_SIZE="${MIN_SIZE:-512}" \
+MAX_SIZE="${MAX_SIZE:-768}" \
+PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}" \
+TRAINABLE_BACKBONE_LAYERS="${TRAINABLE_BACKBONE_LAYERS:-2}" \
+SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.05}" \
+NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}" \
+TRAIN_PRE_NMS_TOP_N="${TRAIN_PRE_NMS_TOP_N:-2000}" \
+TRAIN_POST_NMS_TOP_N="${TRAIN_POST_NMS_TOP_N:-2000}" \
+TEST_PRE_NMS_TOP_N="${TEST_PRE_NMS_TOP_N:-1000}" \
+TEST_POST_NMS_TOP_N="${TEST_POST_NMS_TOP_N:-1000}" \
+SAMPLER_STRATEGY="${SAMPLER_STRATEGY:-class_small_balanced}" \
+AUGMENTATION="${AUGMENTATION:-1}" \
+USE_WANDB="${USE_WANDB:-1}" \
+GPU="${GPU:-0}" \
+bash script.sh train
