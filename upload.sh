@@ -66,11 +66,14 @@ run_allow_exists() {
   status=$?
   set -e
   printf '%s\n' "${output}"
-  if [[ "${status}" -eq 0 ]]; then
-    return 0
-  fi
   if printf '%s' "${output}" | tr '[:upper:]' '[:lower:]' | grep -Eq 'already|exist|409|duplicate'; then
     echo "Resource already exists; continuing."
+    return 0
+  fi
+  if printf '%s' "${output}" | tr '[:upper:]' '[:lower:]' | grep -Eq 'creation error|not found|please upload at least one file'; then
+    return 1
+  fi
+  if [[ "${status}" -eq 0 ]]; then
     return 0
   fi
   return "${status}"
@@ -161,6 +164,14 @@ write_model_instance_metadata() {
   "externalBaseModelUrl": ""
 }
 EOF
+  cat > "${dir}/README.md" <<EOF
+# ${MODEL_NAME}
+
+This Kaggle Model instance stores checkpoint versions for \`${MODEL_NAME}\`.
+
+Actual checkpoint files are uploaded as model instance versions under
+\`checkpoints/best_model.pth\` and \`checkpoints/last_model.pth\`.
+EOF
 }
 
 upload_model() {
@@ -211,7 +222,7 @@ EOF
   echo "============================================="
 
   run_allow_exists kaggle models create -p "${model_metadata_dir}"
-  run_allow_exists kaggle models instances create -p "${instance_metadata_dir}" --dir-mode skip
+  run_allow_exists kaggle models instances create -p "${instance_metadata_dir}" --dir-mode zip
   kaggle models instances versions create "${model_ref}" \
     -p "${version_dir}" \
     --dir-mode zip \
