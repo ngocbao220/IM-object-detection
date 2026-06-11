@@ -1242,6 +1242,7 @@ def main() -> None:
                 ),
             )
     epochs_without_improvement = 0
+    best_map50_seen = best_map
     model_config = {
         "model_impl": args.model_impl,
         "backbone": args.backbone,
@@ -1350,6 +1351,8 @@ def main() -> None:
                 f"{format_resource_usage(device)}",
             )
             epoch_seconds = time.perf_counter() - epoch_started
+            current_map = val_metrics["mAP@0.5"]
+            best_map50_seen = max(best_map50_seen, current_map)
 
             row = {
                 "epoch": epoch,
@@ -1357,7 +1360,9 @@ def main() -> None:
                 "time_seconds": epoch_seconds,
                 **{f"train/{k}": v for k, v in train_logs.items()},
                 **{f"val/{k}": v for k, v in val_logs.items()},
-                "val/mAP@0.5": val_metrics["mAP@0.5"],
+                "val/mAP@0.5": current_map,
+                "val/best_mAP@0.5": best_map50_seen,
+                "best_mAP50": best_map50_seen,
                 "val/micro_precision": val_metrics["micro_precision"],
                 "val/micro_recall": val_metrics["micro_recall"],
             }
@@ -1379,7 +1384,6 @@ def main() -> None:
                 epoch_metrics,
                 model_config,
             )
-            current_map = val_metrics["mAP@0.5"]
             scheduler_metric = current_map
             if current_map > best_map + args.early_stopping_min_delta:
                 best_map = val_metrics["mAP@0.5"]
