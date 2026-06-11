@@ -258,10 +258,24 @@ def build_lr_scheduler(
     lr_milestones: list[int],
 ) -> torch.optim.lr_scheduler.LRScheduler | torch.optim.lr_scheduler.ReduceLROnPlateau:
     if args.lr_scheduler == "cosine":
-        return torch.optim.lr_scheduler.CosineAnnealingLR(
+        warmup_epochs = getattr(args, "warmup_epochs", 2)
+
+        warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer,
-            T_max=max(args.epochs, 1),
+            start_factor=0.1,
+            total_iters=warmup_epochs,
+        )
+
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(args.epochs - warmup_epochs, 1),
             eta_min=args.min_lr,
+        )
+
+        return torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup, cosine],
+            milestones=[warmup_epochs],
         )
     if args.lr_scheduler == "plateau":
         return torch.optim.lr_scheduler.ReduceLROnPlateau(

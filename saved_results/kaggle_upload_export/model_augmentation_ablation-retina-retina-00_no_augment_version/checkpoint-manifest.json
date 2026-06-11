@@ -1,0 +1,5 @@
+{
+  "model_name": "augmentation_ablation/retina/retina-00_no_augment",
+  "best_source": "/home/uet/edu_viettel/xla/IM-object-detection/saved_results/augmentation_ablation/retina/retina-00_no_augment/checkpoints/best_model-20260611-131215.pth",
+  "last_source": "/home/uet/edu_viettel/xla/IM-object-detection/saved_results/augmentation_ablation/retina/retina-00_no_augment/checkpoints/last_model-20260611-131215.pth"
+}

@@ -51,9 +51,9 @@ MODEL_IMPL="${MODEL_IMPL:-custom}"
 CUSTOM_MODEL="${CUSTOM_MODEL:-1}"
 BACKBONE="${BACKBONE:-resnet50}"
 PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
-TRAINABLE_BACKBONE_LAYERS="${TRAINABLE_BACKBONE_LAYERS:-2}"
-MIN_SIZE="${MIN_SIZE:-512}"
-MAX_SIZE="${MAX_SIZE:-768}"
+TRAINABLE_BACKBONE_LAYERS="${TRAINABLE_BACKBONE_LAYERS:-3}"
+MIN_SIZE="${MIN_SIZE:-640}"
+MAX_SIZE="${MAX_SIZE:-960}"
 ROI_DROPOUT="${ROI_DROPOUT:-0.2}"
 RETINA_TOPK_CANDIDATES="${RETINA_TOPK_CANDIDATES:-1000}"
 RETINA_MAX_DETECTIONS="${RETINA_MAX_DETECTIONS:-300}"
@@ -73,14 +73,14 @@ CUSTOM_FIXED_BATCH_SHAPE="${CUSTOM_FIXED_BATCH_SHAPE:-1}"
 # =========================
 EPOCHS="${EPOCHS:-100}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
-NUM_WORKERS="${NUM_WORKERS:-0}"
+NUM_WORKERS="${NUM_WORKERS:-4}"
 LR="${LR:-0.001}"
 MOMENTUM="${MOMENTUM:-0.9}"
-WEIGHT_DECAY="${WEIGHT_DECAY:-0.001}"
+WEIGHT_DECAY="${WEIGHT_DECAY:-0.0005}"
 GRAD_CLIP_NORM="${GRAD_CLIP_NORM:-10.0}"
 
 # LR_SCHEDULER accepts: multistep, cosine, plateau.
-LR_SCHEDULER="${LR_SCHEDULER:-plateau}"
+LR_SCHEDULER="${LR_SCHEDULER:-cosine}"
 LR_MILESTONES="${LR_MILESTONES:-15,25}"
 LR_GAMMA="${LR_GAMMA:-0.1}"
 MIN_LR="${MIN_LR:-0.00001}"
@@ -89,7 +89,7 @@ PLATEAU_FACTOR="${PLATEAU_FACTOR:-0.5}"
 
 EARLY_STOPPING="${EARLY_STOPPING:-1}"
 EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-10}"
-EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-0.01}"
+EARLY_STOPPING_MIN_DELTA="${EARLY_STOPPING_MIN_DELTA:-0.001}"
 
 # =========================
 # 5. Data Sampling/Augment
@@ -109,7 +109,7 @@ BLUR_KERNEL_SIZE="${BLUR_KERNEL_SIZE:-5}"
 NOISE_PROBABILITY="${NOISE_PROBABILITY:-0.08}"
 NOISE_STD="${NOISE_STD:-0.02}"
 
-SAMPLER_STRATEGY="${SAMPLER_STRATEGY:-class_small_balanced}"
+SAMPLER_STRATEGY="${SAMPLER_STRATEGY:-none}"
 SMALL_OBJECT_BOOST="${SMALL_OBJECT_BOOST:-1.5}"
 SMALL_OBJECT_THRESHOLD="${SMALL_OBJECT_THRESHOLD:-0.01}"
 EMPTY_IMAGE_WEIGHT="${EMPTY_IMAGE_WEIGHT:-0.5}"
@@ -119,8 +119,8 @@ OVERSAMPLE_FACTOR="${OVERSAMPLE_FACTOR:-1.0}"
 # =========================
 # 6. Inference/Evaluation
 # =========================
-SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.5}"
-NMS_THRESHOLD="${NMS_THRESHOLD:-0.5}"
+SCORE_THRESHOLD="${SCORE_THRESHOLD:-0.05}"
+NMS_THRESHOLD="${NMS_THRESHOLD:-0.4}"
 CONFIDENCE_THRESHOLDS="${CONFIDENCE_THRESHOLDS:-0.2,0.3,0.4,0.5,0.6,0.7}"
 NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
 
@@ -492,16 +492,26 @@ run_augmentation_experiment() {
   WANDB_RUN_NAME="${ABLATION_RUN_PREFIX}${experiment_name}" \
   train
 }
-
 augment_ablation() {
-  run_augmentation_experiment "00_no_augmentation" 0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+  run_augmentation_experiment "00_no_augment" 0 0 0.0 0.0 0.0 0.0 0.0 0.0
+  # Single augment ablation
   run_augmentation_experiment "01_horizontal_flip" 1 0.5 0.0 0.0 0.0 0.0 0.0 0.0
-  run_augmentation_experiment "02_color_jitter" 1 0.0 0.3 0.0 0.0 0.0 0.0 0.0
-  run_augmentation_experiment "03_grayscale" 1 0.0 0.0 0.05 0.0 0.0 0.0 0.0
-  run_augmentation_experiment "04_scale_jitter" 1 0.0 0.0 0.0 0.4 0.0 0.0 0.0
-  run_augmentation_experiment "05_safe_crop" 1 0.0 0.0 0.0 0.0 0.2 0.0 0.0
-  run_augmentation_experiment "06_blur_noise" 1 0.0 0.0 0.0 0.0 0.0 0.08 0.08
-  run_augmentation_experiment "07_all_augmentations" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08
+  run_augmentation_experiment "02_color_jitter_only" 1 0.0 0.3 0.0 0.0 0.0 0.0 0.0
+  run_augmentation_experiment "03_scale_jitter_only" 1 0.0 0.0 0.0 0.4 0.0 0.0 0.0
+
+  # Incremental combinations
+  run_augmentation_experiment "04_flip_color" 1 0.5 0.3 0.0 0.0 0.0 0.0 0.0
+  run_augmentation_experiment "05_flip_color_scale" 1 0.5 0.3 0.0 0.4 0.0 0.0 0.0
+  run_augmentation_experiment "06_flip_color_scale_gray" 1 0.5 0.3 0.05 0.4 0.0 0.0 0.0
+
+  # Riskier augmentations added separately
+  run_augmentation_experiment "07_flip_color_scale_crop" 1 0.5 0.3 0.0 0.4 0.1 0.0 0.0
+  run_augmentation_experiment "08_flip_color_scale_blur_noise" 1 0.5 0.3 0.0 0.4 0.0 0.03 0.03
+
+  # Full versions
+  run_augmentation_experiment "09_all_safe" 1 0.5 0.3 0.05 0.4 0.1 0.03 0.03
+  run_augmentation_experiment "10_all_strong" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08
+
   summarize_augmentation_ablation
 }
 
