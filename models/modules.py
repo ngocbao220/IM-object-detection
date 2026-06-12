@@ -10,6 +10,11 @@ from torchvision.models import ResNet101_Weights, ResNet50_Weights, resnet101, r
 from torchvision.ops import nms as torchvision_nms
 from torchvision.ops import roi_align
 
+try:
+    import timm
+except ImportError:  # pragma: no cover - optional until HGNetV2 is selected.
+    timm = None
+
 from utils.helper import (
     box_iou,
     clip_boxes_to_image,
@@ -22,11 +27,20 @@ from utils.helper import (
 BACKBONE_WEIGHTS = {
     "resnet50": ResNet50_Weights.DEFAULT,
     "resnet101": ResNet101_Weights.DEFAULT,
+    "hgnetv2_b4": "timm_imagenet",
 }
 
 BACKBONE_FACTORIES = {
     "resnet50": resnet50,
     "resnet101": resnet101,
+}
+
+TIMM_BACKBONE_CANDIDATES = {
+    "hgnetv2_b4": (
+        "hgnetv2_b4.ssld_stage2_ft_in1k",
+        "hgnetv2_b4.ssld_stage1_in1k",
+        "hgnetv2_b4",
+    ),
 }
 
 BACKBONE_STAGE_CHANNELS = {
@@ -36,7 +50,11 @@ BACKBONE_STAGE_CHANNELS = {
 
 
 class ResNetBackbone(nn.Module):
-    """ImageNet-pretrained ResNet feature extractor for the custom detector."""
+    """ImageNet-pretrained feature extractor for custom detectors.
+
+    ResNet backbones are loaded from torchvision. HGNetV2-B4 is loaded through
+    timm as a feature-only backbone and adapted to the same C2-C5 contract.
+    """
 
     def __init__(
         self,
@@ -45,8 +63,20 @@ class ResNetBackbone(nn.Module):
         trainable_backbone_layers: int = 2,
     ) -> None:
         super().__init__()
+        self.backbone_name = backbone_name
+        self.backend = "torchvision"
+        self.selected_indices: list[int] | None = None
+        if backbone_name in TIMM_BACKBONE_CANDIDATES:
+            self.backend = "timm"
+            self.body, self.out_channels, self.selected_indices = self._build_timm_backbone(
+                backbone_name,
+                pretrained_backbone,
+                trainable_backbone_layers,
+            )
+            return
+
         if backbone_name not in BACKBONE_FACTORIES:
-            raise ValueError(f"Unsupported backbone: {backbone_name}. Choose one of {sorted(BACKBONE_FACTORIES)}.")
+            raise ValueError(f"Unsupported backbone: {backbone_name}. Choose one of {sorted(BACKBONE_WEIGHTS)}.")
         weights = BACKBONE_WEIGHTS[backbone_name] if pretrained_backbone else None
         backbone = BACKBONE_FACTORIES[backbone_name](weights=weights)
         self.stem = nn.Sequential(
@@ -76,7 +106,66 @@ class ResNetBackbone(nn.Module):
                 for parameter in layer.parameters():
                     parameter.requires_grad_(False)
 
+    def _resolve_timm_model_name(self, backbone_name: str) -> str:
+        if timm is None:
+            raise ImportError(
+                f"Backbone {backbone_name} requires timm. Install it with: pip install timm"
+            )
+        candidates = TIMM_BACKBONE_CANDIDATES[backbone_name]
+        available = set(timm.list_models(f"{backbone_name}*"))
+        for candidate in candidates:
+            if candidate in available:
+                return candidate
+        if available:
+            return sorted(available)[0]
+        raise ValueError(
+            f"Could not find a timm model matching {backbone_name}. "
+            f"Tried: {', '.join(candidates)}"
+        )
+
+    def _build_timm_backbone(
+        self,
+        backbone_name: str,
+        pretrained_backbone: bool,
+        trainable_backbone_layers: int,
+    ) -> tuple[nn.Module, tuple[int, ...], list[int]]:
+        model_name = self._resolve_timm_model_name(backbone_name)
+        body = timm.create_model(
+            model_name,
+            pretrained=pretrained_backbone,
+            features_only=True,
+        )
+        reductions = list(body.feature_info.reduction())
+        channels = list(body.feature_info.channels())
+        selected_indices = [idx for idx, stride in enumerate(reductions) if stride in {4, 8, 16, 32}]
+        if len(selected_indices) != 4:
+            selected_indices = list(range(max(0, len(channels) - 4), len(channels)))
+        if len(selected_indices) != 4:
+            raise ValueError(
+                f"Backbone {model_name} must expose 4 feature levels for FPN, got {len(selected_indices)}."
+            )
+
+        if pretrained_backbone:
+            for parameter in body.parameters():
+                parameter.requires_grad_(False)
+            if trainable_backbone_layers >= 4:
+                modules_to_unfreeze = [body]
+            else:
+                children = list(body.children())
+                modules_to_unfreeze = children[-max(trainable_backbone_layers, 0):] if trainable_backbone_layers else []
+            for module in modules_to_unfreeze:
+                for parameter in module.parameters():
+                    parameter.requires_grad_(True)
+
+        return body, tuple(channels[idx] for idx in selected_indices), selected_indices
+
     def forward(self, images: torch.Tensor) -> OrderedDict[str, torch.Tensor]:
+        if self.backend == "timm":
+            assert self.selected_indices is not None
+            outputs = self.body(images)
+            selected = [outputs[index] for index in self.selected_indices]
+            return OrderedDict((f"c{index + 2}", feature) for index, feature in enumerate(selected))
+
         x = self.stem(images)
         c2 = self.layer1(x)
         c3 = self.layer2(c2)

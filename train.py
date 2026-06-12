@@ -40,7 +40,7 @@ from utils.metric import evaluate_map
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train Faster R-CNN with a ResNet backbone.")
+    parser = argparse.ArgumentParser(description="Train an object detector with a selectable backbone.")
     parser.add_argument("--train_data", required=True)
     parser.add_argument("--val_data", required=True)
     parser.add_argument("--image_dir", required=True)
@@ -943,6 +943,11 @@ def main() -> None:
         raise ValueError("--trainable_backbone_layers must be between 0 and 4 for the custom model.")
     if args.model_impl == "torchvision" and not 0 <= args.trainable_backbone_layers <= 5:
         raise ValueError("--trainable_backbone_layers must be between 0 and 5 for torchvision.")
+    if args.model_impl == "torchvision" and args.backbone not in {"resnet50", "resnet101"}:
+        raise ValueError(
+            "--model_impl torchvision only supports --backbone resnet50/resnet101. "
+            "Use --model_impl retina/custom/yolo for hgnetv2_b4."
+        )
     if args.model_impl == "retina" and not 0 <= args.trainable_backbone_layers <= 4:
         raise ValueError("--trainable_backbone_layers must be between 0 and 4 for RetinaNet.")
     if args.model_impl == "yolo" and not 0 <= args.trainable_backbone_layers <= 4:

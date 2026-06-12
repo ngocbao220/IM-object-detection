@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from models.custom_faster_rcnn import CUSTOM_MODEL_VERSION, CustomFasterRCNN
-from models.modules import BACKBONE_WEIGHTS
+from models.modules import BACKBONE_FACTORIES, BACKBONE_WEIGHTS
 
 
 def create_torchvision_faster_rcnn(
@@ -29,8 +29,11 @@ def create_torchvision_faster_rcnn(
     box_score_thresh: float = 0.05,
     box_nms_thresh: float = 0.5,
 ) -> torch.nn.Module:
-    if backbone_name not in BACKBONE_WEIGHTS:
-        raise ValueError(f"Unsupported backbone: {backbone_name}. Choose one of {sorted(BACKBONE_WEIGHTS)}.")
+    if backbone_name not in BACKBONE_FACTORIES:
+        raise ValueError(
+            f"Torchvision Faster R-CNN only supports ResNet backbones here. "
+            f"Got {backbone_name}. Use MODEL_IMPL=retina/custom/yolo for non-ResNet backbones."
+        )
     weights_backbone = BACKBONE_WEIGHTS[backbone_name] if pretrained_backbone else None
     effective_trainable_layers = trainable_backbone_layers if weights_backbone is not None else 5
     backbone = resnet_fpn_backbone(
