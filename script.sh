@@ -33,6 +33,8 @@ WANDB_RUN_NAME="${WANDB_RUN_NAME:-retina-augment-ablation}"
 RUN_RESULTS_DIR="${SAVED_RESULTS_DIR}/${WANDB_RUN_NAME}"
 
 CHECKPOINT="${CHECKPOINT:-${RUN_RESULTS_DIR}/checkpoints/best_model.pth}"
+MODEL_NAME="${MODEL_NAME:-}"
+MODEL_VERSION="${MODEL_VERSION:-latest}"
 RESUME_FROM="${RESUME_FROM:-}"
 RESUME_LAST="${RESUME_LAST:-0}"
 
@@ -357,6 +359,10 @@ predict() {
     --yolo_max_detections "${YOLO_MAX_DETECTIONS}"
   )
 
+  if [[ -n "${MODEL_NAME}" ]]; then
+    predict_args+=(--model_name "${MODEL_NAME}" --model_version "${MODEL_VERSION}")
+  fi
+
   if [[ -n "${ANCHOR_SIZES}" ]]; then
     predict_args+=(--anchor_sizes "${ANCHOR_SIZES}")
   fi
@@ -417,6 +423,10 @@ predict_raw() {
     --yolo_topk_candidates "${raw_yolo_topk_candidates}"
     --yolo_max_detections "${raw_yolo_max_detections}"
   )
+
+  if [[ -n "${MODEL_NAME}" ]]; then
+    predict_args+=(--model_name "${MODEL_NAME}" --model_version "${MODEL_VERSION}")
+  fi
 
   if [[ -n "${ANCHOR_SIZES}" ]]; then
     predict_args+=(--anchor_sizes "${ANCHOR_SIZES}")
