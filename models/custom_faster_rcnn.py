@@ -50,6 +50,7 @@ class CustomFasterRCNN(nn.Module):
         test_post_nms_top_n: int = 1000,
         fixed_batch_shape: bool = False,
         roi_dropout: float = 0.0,
+        class_loss_weights: torch.Tensor | None = None,
     ) -> None:
         super().__init__()
         self.num_classes = num_classes
@@ -74,6 +75,12 @@ class CustomFasterRCNN(nn.Module):
             sizes=anchor_sizes or (32, 64, 128, 256, 512),
             ratios=anchor_ratios or (0.5, 1.0, 2.0),
         )
+        if class_loss_weights is not None:
+            if class_loss_weights.numel() != num_classes:
+                raise ValueError("class_loss_weights must include background plus all foreground classes.")
+            self.register_buffer("class_loss_weights", class_loss_weights.float())
+        else:
+            self.class_loss_weights = None
         self.rpn_head = RPNHead(roi_channels, self.anchor_generator.num_anchors)
         self.roi_head = ROIHead(roi_channels, num_classes, dropout=roi_dropout)
 
@@ -189,6 +196,7 @@ class CustomFasterRCNN(nn.Module):
                 labels,
                 regression_targets,
                 self.num_classes,
+                self.class_loss_weights,
             )
             return {
                 "loss_classifier": loss_classifier,

@@ -41,6 +41,7 @@ class YOLOLikeDetector(nn.Module):
         max_detections_per_image: int = 300,
         topk_candidates: int = 1000,
         negative_ratio: int = 3,
+        class_loss_weights: torch.Tensor | None = None,
     ) -> None:
         super().__init__()
         if num_classes < 2:
@@ -52,6 +53,14 @@ class YOLOLikeDetector(nn.Module):
         self.max_detections_per_image = max_detections_per_image
         self.topk_candidates = topk_candidates
         self.negative_ratio = negative_ratio
+        if class_loss_weights is not None:
+            if class_loss_weights.numel() == num_classes:
+                class_loss_weights = class_loss_weights[1:]
+            if class_loss_weights.numel() != self.num_foreground_classes:
+                raise ValueError("YOLOLikeDetector class_loss_weights must match foreground classes.")
+            self.register_buffer("class_loss_weights", class_loss_weights.float())
+        else:
+            self.class_loss_weights = None
         self.transform = DetectionModelTransform(min_size=min_size, max_size=max_size)
         self.backbone = ResNetBackbone(
             backbone_name=backbone_name,
@@ -142,6 +151,7 @@ class YOLOLikeDetector(nn.Module):
                 class_loss = class_loss + F.cross_entropy(
                     class_logits[image_index][positive],
                     target_classes,
+                    weight=self.class_loss_weights,
                     reduction="sum",
                 )
                 target_deltas = encode_boxes(matched_boxes[image_index][positive], anchors[positive])
@@ -272,6 +282,7 @@ def create_yolo_like(
     box_nms_thresh: float = 0.5,
     max_detections_per_image: int = 300,
     topk_candidates: int = 1000,
+    class_loss_weights: torch.Tensor | None = None,
 ) -> nn.Module:
     return YOLOLikeDetector(
         num_classes=num_classes,
@@ -286,4 +297,5 @@ def create_yolo_like(
         box_nms_thresh=box_nms_thresh,
         max_detections_per_image=max_detections_per_image,
         topk_candidates=topk_candidates,
+        class_loss_weights=class_loss_weights,
     )

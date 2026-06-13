@@ -44,6 +44,7 @@ class RetinaNet(nn.Module):
         topk_candidates: int = 1000,
         alpha: float = 0.25,
         gamma: float = 2.0,
+        class_loss_weights: torch.Tensor | None = None,
     ) -> None:
         super().__init__()
         if num_classes < 2:
@@ -56,6 +57,14 @@ class RetinaNet(nn.Module):
         self.topk_candidates = topk_candidates
         self.alpha = alpha
         self.gamma = gamma
+        if class_loss_weights is not None:
+            if class_loss_weights.numel() == num_classes:
+                class_loss_weights = class_loss_weights[1:]
+            if class_loss_weights.numel() != self.num_foreground_classes:
+                raise ValueError("RetinaNet class_loss_weights must match foreground classes.")
+            self.register_buffer("class_loss_weights", class_loss_weights.float())
+        else:
+            self.class_loss_weights = None
         self.transform = DetectionModelTransform(min_size=min_size, max_size=max_size)
         self.backbone = ResNetBackbone(
             backbone_name=backbone_name,
@@ -124,13 +133,17 @@ class RetinaNet(nn.Module):
             targets_one_hot = cls_logits.new_zeros((labels_per_image.shape[0], self.num_foreground_classes))
             if positive.any():
                 targets_one_hot[positive, labels_per_image[positive] - 1] = 1.0
-            cls_loss = cls_loss + sigmoid_focal_loss(
+            loss_per_class = sigmoid_focal_loss(
                 cls_logits[image_index][valid],
                 targets_one_hot[valid],
                 alpha=self.alpha,
                 gamma=self.gamma,
-                reduction="sum",
+                reduction="none",
             )
+            if self.class_loss_weights is not None:
+                positive_weights = 1.0 + targets_one_hot[valid] * (self.class_loss_weights - 1.0)
+                loss_per_class = loss_per_class * positive_weights
+            cls_loss = cls_loss + loss_per_class.sum()
             num_positive = int(positive.sum().item())
             normalizer += max(num_positive, 1)
             if num_positive:
@@ -239,6 +252,7 @@ def create_retinanet(
     box_nms_thresh: float = 0.5,
     max_detections_per_image: int = 300,
     topk_candidates: int = 1000,
+    class_loss_weights: torch.Tensor | None = None,
 ) -> nn.Module:
     return RetinaNet(
         num_classes=num_classes,
@@ -253,5 +267,5 @@ def create_retinanet(
         box_nms_thresh=box_nms_thresh,
         max_detections_per_image=max_detections_per_image,
         topk_candidates=topk_candidates,
+        class_loss_weights=class_loss_weights,
     )
-

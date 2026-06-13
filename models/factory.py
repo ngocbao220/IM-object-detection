@@ -33,6 +33,7 @@ def create_detection_model(
     retina_max_detections: int = 300,
     yolo_topk_candidates: int = 1000,
     yolo_max_detections: int = 300,
+    class_loss_weights: torch.Tensor | None = None,
 ) -> torch.nn.Module:
     if model_impl == "retina":
         return create_retinanet(
@@ -48,6 +49,7 @@ def create_detection_model(
             box_nms_thresh=box_nms_thresh,
             topk_candidates=retina_topk_candidates,
             max_detections_per_image=retina_max_detections,
+            class_loss_weights=class_loss_weights,
         )
     if model_impl == "yolo":
         return create_yolo_like(
@@ -63,6 +65,7 @@ def create_detection_model(
             box_nms_thresh=box_nms_thresh,
             topk_candidates=yolo_topk_candidates,
             max_detections_per_image=yolo_max_detections,
+            class_loss_weights=class_loss_weights,
         )
     return create_faster_rcnn(
         num_classes=num_classes,
@@ -82,6 +85,7 @@ def create_detection_model(
         test_post_nms_top_n=test_post_nms_top_n,
         fixed_batch_shape=fixed_batch_shape,
         roi_dropout=roi_dropout,
+        class_loss_weights=class_loss_weights if model_impl == "custom" else None,
     )
 
 

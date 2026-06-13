@@ -79,6 +79,7 @@ def create_custom_faster_rcnn(
     test_post_nms_top_n: int = 1000,
     fixed_batch_shape: bool = False,
     roi_dropout: float = 0.0,
+    class_loss_weights: torch.Tensor | None = None,
 ) -> torch.nn.Module:
     return CustomFasterRCNN(
         num_classes=num_classes,
@@ -97,6 +98,7 @@ def create_custom_faster_rcnn(
         test_post_nms_top_n=test_post_nms_top_n,
         fixed_batch_shape=fixed_batch_shape,
         roi_dropout=roi_dropout,
+        class_loss_weights=class_loss_weights,
     )
 
 
@@ -118,6 +120,7 @@ def create_faster_rcnn(
     test_post_nms_top_n: int = 1000,
     fixed_batch_shape: bool = False,
     roi_dropout: float = 0.0,
+    class_loss_weights: torch.Tensor | None = None,
 ) -> torch.nn.Module:
     if custom:
         return create_custom_faster_rcnn(
@@ -137,6 +140,7 @@ def create_faster_rcnn(
             test_post_nms_top_n=test_post_nms_top_n,
             fixed_batch_shape=fixed_batch_shape,
             roi_dropout=roi_dropout,
+            class_loss_weights=class_loss_weights,
         )
     return create_torchvision_faster_rcnn(
         num_classes=num_classes,

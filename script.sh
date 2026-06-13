@@ -10,8 +10,8 @@ export CUDA_VISIBLE_DEVICES=0,1
 #   bash script.sh evaluate
 #   bash script.sh analyze
 #   bash script.sh tune-thresholds
-#   bash script.sh augment-ablation
-#   bash script.sh augment-summary
+#   bash script.sh hgnet-ablation
+#   bash script.sh hgnet-summary
 #   bash script.sh all
 
 # =========================
@@ -113,6 +113,9 @@ SAMPLER_STRATEGY="${SAMPLER_STRATEGY:-none}"
 SMALL_OBJECT_BOOST="${SMALL_OBJECT_BOOST:-1.5}"
 SMALL_OBJECT_THRESHOLD="${SMALL_OBJECT_THRESHOLD:-0.01}"
 EMPTY_IMAGE_WEIGHT="${EMPTY_IMAGE_WEIGHT:-0.5}"
+CLASS_LOSS_WEIGHTING="${CLASS_LOSS_WEIGHTING:-none}"
+CLASS_LOSS_MAX_WEIGHT="${CLASS_LOSS_MAX_WEIGHT:-3.0}"
+CLASS_LOSS_BACKGROUND_WEIGHT="${CLASS_LOSS_BACKGROUND_WEIGHT:-1.0}"
 OVERSAMPLE_CLASS="${OVERSAMPLE_CLASS:-}"
 OVERSAMPLE_FACTOR="${OVERSAMPLE_FACTOR:-1.0}"
 
@@ -129,6 +132,7 @@ NMS_THRESHOLDS="${NMS_THRESHOLDS:-0.3,0.4,0.5,0.6,0.7}"
 # =========================
 GPU="${GPU:-0}"
 GPUS="${GPUS:-}"
+DDP_FIND_UNUSED_PARAMETERS="${DDP_FIND_UNUSED_PARAMETERS:-1}"
 USE_WANDB="${USE_WANDB:-1}"
 LOG_INTERVAL="${LOG_INTERVAL:-20}"
 FULL_COCO_METRICS_INTERVAL="${FULL_COCO_METRICS_INTERVAL:-0}"
@@ -141,10 +145,10 @@ export PYTORCH_CUDA_ALLOC_CONF
 # 8. Experiment Suites
 # =========================
 ABLATION_MODEL_IMPL="${ABLATION_MODEL_IMPL:-retina}"
-ABLATION_BACKBONE="${ABLATION_BACKBONE:-${BACKBONE}}"
-ABLATION_RUN_PREFIX="${ABLATION_RUN_PREFIX:-${ABLATION_MODEL_IMPL}-}"
-ABLATION_RESULTS_DIR="${ABLATION_RESULTS_DIR:-./saved_results/augmentation_ablation/${ABLATION_MODEL_IMPL}}"
-ABLATION_EPOCHS="${ABLATION_EPOCHS:-30}"
+ABLATION_BACKBONE="${ABLATION_BACKBONE:-hgnetv2_b4}"
+ABLATION_RUN_PREFIX="${ABLATION_RUN_PREFIX:-${ABLATION_MODEL_IMPL}-${ABLATION_BACKBONE}-}"
+ABLATION_RESULTS_DIR="${ABLATION_RESULTS_DIR:-./saved_results/hgnet_ablation/${ABLATION_MODEL_IMPL}}"
+ABLATION_EPOCHS="${ABLATION_EPOCHS:-50}"
 
 if [[ -n "${MODEL_IMPL}" ]]; then
   case "${MODEL_IMPL}" in
@@ -258,6 +262,9 @@ train() {
     --small_object_boost "${SMALL_OBJECT_BOOST}"
     --small_object_threshold "${SMALL_OBJECT_THRESHOLD}"
     --empty_image_weight "${EMPTY_IMAGE_WEIGHT}"
+    --class_loss_weighting "${CLASS_LOSS_WEIGHTING}"
+    --class_loss_max_weight "${CLASS_LOSS_MAX_WEIGHT}"
+    --class_loss_background_weight "${CLASS_LOSS_BACKGROUND_WEIGHT}"
     --oversample_factor "${OVERSAMPLE_FACTOR}"
     --early_stopping_patience "${EARLY_STOPPING_PATIENCE}"
     --early_stopping_min_delta "${EARLY_STOPPING_MIN_DELTA}"
@@ -267,6 +274,12 @@ train() {
     train_args+=(--gpus "${GPUS}")
   elif [[ -n "${GPU}" ]]; then
     train_args+=(--gpu "${GPU}")
+  fi
+
+  if [[ "${DDP_FIND_UNUSED_PARAMETERS}" == "1" ]]; then
+    train_args+=(--ddp_find_unused_parameters)
+  else
+    train_args+=(--no-ddp_find_unused_parameters)
   fi
 
   if [[ -n "${OVERSAMPLE_CLASS}" ]]; then
@@ -451,7 +464,7 @@ tune_thresholds() {
     --nms_thresholds "${NMS_THRESHOLDS}"
 }
 
-run_augmentation_experiment() {
+run_hgnet_ablation_experiment() {
   experiment_name="$1"
   augmentation="$2"
   flip_probability="$3"
@@ -461,6 +474,8 @@ run_augmentation_experiment() {
   safe_crop_probability="$7"
   blur_probability="$8"
   noise_probability="$9"
+  sampler_strategy="${10}"
+  class_loss_weighting="${11:-none}"
 
   ablation_custom_model=0
   if [[ "${ABLATION_MODEL_IMPL}" == "custom" ]]; then
@@ -468,11 +483,12 @@ run_augmentation_experiment() {
   fi
 
   echo "============================================================"
-  echo "Running augmentation experiment: ${experiment_name}"
+  echo "Running HGNet ablation experiment: ${experiment_name}"
   echo "model_impl=${ABLATION_MODEL_IMPL} backbone=${ABLATION_BACKBONE}"
   echo "augmentation=${augmentation}"
   echo "flip=${flip_probability} jitter=${jitter_probability} grayscale=${grayscale_probability}"
   echo "scale=${scale_probability} safe_crop=${safe_crop_probability} blur=${blur_probability} noise=${noise_probability}"
+  echo "sampler_strategy=${sampler_strategy} class_loss_weighting=${class_loss_weighting}"
   echo "results=${ABLATION_RESULTS_DIR}/${ABLATION_RUN_PREFIX}${experiment_name}"
   echo "============================================================"
 
@@ -486,37 +502,37 @@ run_augmentation_experiment() {
   COLOR_JITTER_PROBABILITY="${jitter_probability}" \
   GRAYSCALE_PROBABILITY="${grayscale_probability}" \
   SCALE_JITTER_PROBABILITY="${scale_probability}" \
+  SCALE_JITTER_MIN=0.85 \
+  SCALE_JITTER_MAX=1.20 \
   SAFE_CROP_PROBABILITY="${safe_crop_probability}" \
+  SAFE_CROP_MIN_SCALE=0.8 \
+  SAFE_CROP_MIN_VISIBILITY=0.7 \
   BLUR_PROBABILITY="${blur_probability}" \
   NOISE_PROBABILITY="${noise_probability}" \
+  SAMPLER_STRATEGY="${sampler_strategy}" \
+  CLASS_LOSS_WEIGHTING="${class_loss_weighting}" \
   WANDB_RUN_NAME="${ABLATION_RUN_PREFIX}${experiment_name}" \
   train
 }
 augment_ablation() {
-  run_augmentation_experiment "00_no_augment" 0 0 0.0 0.0 0.0 0.0 0.0 0.0
-  # Single augment ablation
-  run_augmentation_experiment "01_horizontal_flip" 1 0.5 0.0 0.0 0.0 0.0 0.0 0.0
-  run_augmentation_experiment "02_color_jitter_only" 1 0.0 0.3 0.0 0.0 0.0 0.0 0.0
-  run_augmentation_experiment "03_scale_jitter_only" 1 0.0 0.0 0.0 0.4 0.0 0.0 0.0
+  # H1: HGNet + flip_color_scale_crop
+  run_hgnet_ablation_experiment "H1_flip_color_scale_crop" 1 0.5 0.3 0.0 0.4 0.1 0.0 0.0 "none"
 
-  # Incremental combinations
-  run_augmentation_experiment "04_flip_color" 1 0.5 0.3 0.0 0.0 0.0 0.0 0.0
-  run_augmentation_experiment "05_flip_color_scale" 1 0.5 0.3 0.0 0.4 0.0 0.0 0.0
-  run_augmentation_experiment "06_flip_color_scale_gray" 1 0.5 0.3 0.05 0.4 0.0 0.0 0.0
+  # H2: HGNet + all_strong
+  run_hgnet_ablation_experiment "H2_all_strong" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08 "none"
 
-  # Riskier augmentations added separately
-  run_augmentation_experiment "07_flip_color_scale_crop" 1 0.5 0.3 0.0 0.4 0.1 0.0 0.0
-  run_augmentation_experiment "08_flip_color_scale_blur_noise" 1 0.5 0.3 0.0 0.4 0.0 0.03 0.03
+  # H3: HGNet + best augment + sampler strategies
+  run_hgnet_ablation_experiment "H3a_best_aug_class_balanced" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08 "class_balanced"
+  run_hgnet_ablation_experiment "H3b_best_aug_class_small_balanced" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08 "class_small_balanced"
 
-  # Full versions
-  run_augmentation_experiment "09_all_safe" 1 0.5 0.3 0.05 0.4 0.1 0.03 0.03
-  run_augmentation_experiment "10_all_strong" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08
+  # H4: HGNet + best augment + class-weighted classification loss
+  run_hgnet_ablation_experiment "H4_best_aug_sqrt_class_weight" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08 "none" "sqrt_inverse"
 
-  summarize_augmentation_ablation
+  summarize_hgnet_ablation
 }
 
-summarize_augmentation_ablation() {
-  echo "============ Augmentation Summary ============"
+summarize_hgnet_ablation() {
+  echo "============ HGNet Ablation Summary ============"
   echo "results_dir: ${ABLATION_RESULTS_DIR}"
   echo "=============================================="
   python utils/summarize_augmentation_ablation.py \
@@ -559,8 +575,14 @@ case "${1:-help}" in
   augment-ablation)
     augment_ablation
     ;;
+  hgnet-ablation)
+    augment_ablation
+    ;;
   augment-summary)
-    summarize_augmentation_ablation
+    summarize_hgnet_ablation
+    ;;
+  hgnet-summary)
+    summarize_hgnet_ablation
     ;;
   test)
     self_test

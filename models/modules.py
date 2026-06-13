@@ -670,10 +670,11 @@ def roi_losses(
     labels: list[torch.Tensor],
     regression_targets: list[torch.Tensor],
     num_classes: int,
+    class_loss_weights: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     labels_cat = torch.cat(labels, dim=0)
     regression_targets_cat = torch.cat(regression_targets, dim=0)
-    classification_loss = F.cross_entropy(class_logits, labels_cat)
+    classification_loss = F.cross_entropy(class_logits, labels_cat, weight=class_loss_weights)
     positive = torch.where(labels_cat > 0)[0]
     if positive.numel() == 0:
         return classification_loss, box_regression.new_zeros(())

@@ -131,6 +131,12 @@ def parse_args() -> argparse.Namespace:
     gpu_group.add_argument("--gpus", default=None, help="Use multiple CUDA GPUs with DDP, e.g. --gpus 0,1.")
     parser.add_argument("--distributed", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
+        "--ddp_find_unused_parameters",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Allow DDP training when some detection head parameters are unused in a rank/batch.",
+    )
+    parser.add_argument(
         "--pretrained_backbone",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -185,6 +191,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--small_object_boost", type=float, default=1.5)
     parser.add_argument("--small_object_threshold", type=float, default=0.01)
     parser.add_argument("--empty_image_weight", type=float, default=0.5)
+    parser.add_argument(
+        "--class_loss_weighting",
+        choices=["none", "inverse", "sqrt_inverse"],
+        default="none",
+        help="Weight classification loss by class frequency. Only custom/retina/yolo models use this directly.",
+    )
+    parser.add_argument(
+        "--class_loss_max_weight",
+        type=float,
+        default=3.0,
+        help="Maximum foreground class loss weight when --class_loss_weighting is enabled.",
+    )
+    parser.add_argument(
+        "--class_loss_background_weight",
+        type=float,
+        default=1.0,
+        help="Background class weight for custom Faster R-CNN ROI cross entropy.",
+    )
     parser.add_argument(
         "--oversample_class",
         default=None,
@@ -637,6 +661,48 @@ def count_dataset_boxes(dataset: OdDataset) -> dict[str, Any]:
     }
 
 
+def build_class_loss_weights(
+    dataset: OdDataset,
+    weighting: str,
+    max_weight: float,
+    background_weight: float,
+) -> tuple[torch.Tensor | None, dict[str, Any]]:
+    if weighting == "none":
+        return None, {"enabled": False, "strategy": "none"}
+    if max_weight < 1.0:
+        raise ValueError("--class_loss_max_weight must be greater than or equal to 1.0.")
+    if background_weight <= 0:
+        raise ValueError("--class_loss_background_weight must be greater than 0.")
+
+    class_counts = Counter()
+    for annotations in dataset.annotations_by_image.values():
+        class_counts.update(ann["class"] for ann in annotations)
+    max_count = max(class_counts.values(), default=1)
+
+    weights = [float(background_weight)]
+    weight_by_class: dict[str, float] = {}
+    for class_name in dataset.classes:
+        count = max(class_counts.get(class_name, 0), 1)
+        if weighting == "inverse":
+            weight = max_count / count
+        elif weighting == "sqrt_inverse":
+            weight = math.sqrt(max_count / count)
+        else:
+            raise ValueError("--class_loss_weighting must be one of none, inverse, sqrt_inverse.")
+        weight = min(float(weight), max_weight)
+        weights.append(weight)
+        weight_by_class[class_name] = weight
+
+    return torch.tensor(weights, dtype=torch.float32), {
+        "enabled": True,
+        "strategy": weighting,
+        "background_weight": float(background_weight),
+        "max_weight": float(max_weight),
+        "weights": weight_by_class,
+        "class_counts": {class_name: int(class_counts.get(class_name, 0)) for class_name in dataset.classes},
+    }
+
+
 def build_training_sampler(
     dataset: OdDataset,
     strategy: str,
@@ -823,6 +889,15 @@ def format_session_info(info: dict[str, Any]) -> str:
         )
     else:
         lines.append("Sampling: disabled")
+    if info["class_loss_weights"]["enabled"]:
+        lines.append(
+            "Class loss weights: "
+            f"strategy={info['class_loss_weights']['strategy']}, "
+            f"background={info['class_loss_weights']['background_weight']:.3f}, "
+            f"weights={info['class_loss_weights']['weights']}"
+        )
+    else:
+        lines.append("Class loss weights: disabled")
     lines.append(
         f"Model: {info['model']['implementation']} {info['model']['backbone']} "
         f"({info['model']['trainable_parameters']:,}/"
@@ -853,7 +928,10 @@ def format_session_info(info: dict[str, Any]) -> str:
             f"│   ├── small_object_boost : {hp['small_object_boost']}",
             f"│   ├── empty_image_weight : {hp['empty_image_weight']}",
             f"│   ├── oversample_class   : {hp['oversample_class'] or 'disabled'}",
-            f"│   └── oversample_factor  : {hp['oversample_factor']}",
+            f"│   ├── oversample_factor  : {hp['oversample_factor']}",
+            f"│   ├── class_loss_weight  : {hp['class_loss_weighting']}",
+            f"│   ├── class_loss_max     : {hp['class_loss_max_weight']}",
+            f"│   └── bg_loss_weight     : {hp['class_loss_background_weight']}",
             f"├── Optimizer",
             f"│   ├── lr                 : {hp['lr']}",
             f"│   ├── momentum           : {hp['momentum']}",
@@ -1044,6 +1122,14 @@ def main() -> None:
         args.small_object_threshold,
         args.empty_image_weight,
     )
+    class_loss_weights, class_loss_info = build_class_loss_weights(
+        train_dataset,
+        args.class_loss_weighting,
+        args.class_loss_max_weight,
+        args.class_loss_background_weight,
+    )
+    if args.class_loss_weighting != "none" and args.model_impl == "torchvision" and is_main_process:
+        print("Class loss weighting is ignored for MODEL_IMPL=torchvision because torchvision losses are internal.")
     if world_size > 1 and oversampling_sampler is not None:
         raise RuntimeError("--oversample_class is currently supported only for single-GPU training.")
     train_sampler = (
@@ -1089,9 +1175,14 @@ def main() -> None:
         retina_max_detections=args.retina_max_detections,
         yolo_topk_candidates=args.yolo_topk_candidates,
         yolo_max_detections=args.yolo_max_detections,
+        class_loss_weights=class_loss_weights,
     ).to(device)
     if world_size > 1:
-        model = DistributedDataParallel(model, device_ids=[device.index])
+        model = DistributedDataParallel(
+            model,
+            device_ids=[device.index],
+            find_unused_parameters=args.ddp_find_unused_parameters,
+        )
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
@@ -1137,6 +1228,7 @@ def main() -> None:
             "start_epoch": resume_epoch + 1 if resume_checkpoint is not None else 1,
         },
         "oversampling": oversampling_info,
+        "class_loss_weights": class_loss_info,
         "device": get_device_info(device),
         "distributed": {"world_size": world_size, "rank": rank, "gpus": args.gpus},
         "model": {
@@ -1201,6 +1293,9 @@ def main() -> None:
             "small_object_boost": args.small_object_boost,
             "small_object_threshold": args.small_object_threshold,
             "empty_image_weight": args.empty_image_weight,
+            "class_loss_weighting": args.class_loss_weighting,
+            "class_loss_max_weight": args.class_loss_max_weight,
+            "class_loss_background_weight": args.class_loss_background_weight,
             "oversample_class": args.oversample_class,
             "oversample_factor": args.oversample_factor,
             "early_stopping": args.early_stopping,
