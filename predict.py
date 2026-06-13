@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model_name",
-        default="retina-hgnetb4v2-fullaugment",
+        default=None,
         help="Optional Kaggle Model instance/run name to download when the checkpoint is missing.",
     )
     parser.add_argument(

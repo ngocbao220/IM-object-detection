@@ -1,0 +1,5 @@
+{
+  "model_name": "retina-hgnetb4v2-fullaugment",
+  "best_source": "/Users/ngocbao/Documents/Document/Semester6/Image Processing/Final/saved_results/retina-hgnetb4v2-fullaugment/checkpoints/best_model.pth",
+  "last_source": "/Users/ngocbao/Documents/Document/Semester6/Image Processing/Final/saved_results/retina-hgnetb4v2-fullaugment/checkpoints/last_model.pth"
+}

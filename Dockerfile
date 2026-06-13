@@ -31,6 +31,11 @@ RUN pip install --upgrade pip && pip install \
     pandas \
     tensorboard \
     torchmetrics \
+    kaggle \
+    huggingface-hub \
+    wandb \
+    ipywidgets \
+    seaborn \
     timm \
     transformers \
     einops \

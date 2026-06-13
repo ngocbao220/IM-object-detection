@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Simple Kaggle download helper.
+# Simple download helper.
 #
 # Model checkpoint:
 #   bash download.sh --model MODEL_NAME=retina-baseline
@@ -13,6 +13,8 @@ set -euo pipefail
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 SAVED_RESULTS_DIR="${SAVED_RESULTS_DIR:-${PROJECT_ROOT}/saved_results}"
 KAGGLE_OWNER="${KAGGLE_OWNER:-${KAGGLE_USERNAME:-ngocbaotrinhtuan}}"
+HF_REPO_ID="${HF_REPO_ID:-ngocbao05/object-detection-checkpoints}"
+HF_REPO_TYPE="${HF_REPO_TYPE:-model}"
 KAGGLE_MODEL_SLUG="${KAGGLE_MODEL_SLUG:-object-detection-checkpoints}"
 KAGGLE_FRAMEWORK="${KAGGLE_FRAMEWORK:-PyTorch}"
 KAGGLE_DATASET_SLUG="${KAGGLE_DATASET_SLUG:-${KAGGLE_OWNER}/object-detection-public}"
@@ -32,8 +34,8 @@ Examples:
   bash download.sh --dataset
 
 Optional env:
-  KAGGLE_OWNER, KAGGLE_MODEL_SLUG, KAGGLE_FRAMEWORK, KAGGLE_DATASET_SLUG,
-  SAVED_RESULTS_DIR
+  HF_REPO_ID, HF_REPO_TYPE, HF_TOKEN, HUGGINGFACE_TOKEN,
+  KAGGLE_OWNER, KAGGLE_DATASET_SLUG, SAVED_RESULTS_DIR
 EOF
 }
 
@@ -46,6 +48,13 @@ slugify() {
 require_kaggle() {
   if ! command -v kaggle >/dev/null 2>&1; then
     echo "kaggle CLI is not installed. Run: pip install kaggle" >&2
+    exit 1
+  fi
+}
+
+require_huggingface_hub() {
+  if ! python -c "import huggingface_hub" >/dev/null 2>&1; then
+    echo "huggingface_hub is not installed. Run: pip install huggingface-hub" >&2
     exit 1
   fi
 }
@@ -87,60 +96,71 @@ parse_args() {
   done
 }
 
-latest_model_version() {
-  local model_ref="$1"
-  local output
-  output="$(kaggle models instances versions list "${model_ref}" --csv)"
-  printf '%s\n' "${output}" \
-    | awk -F',' 'NR > 1 && $1 ~ /^[0-9]+$/ { print $1; exit }'
-}
-
 download_model() {
   if [[ -z "${MODEL_NAME}" ]]; then
     echo "Missing MODEL_NAME. Example: bash download.sh --model MODEL_NAME=retina-baseline" >&2
     exit 1
   fi
 
-  require_kaggle
+  require_huggingface_hub
   mkdir -p "${SAVED_RESULTS_DIR}"
 
-  local instance_slug model_ref version model_version_ref tmp_dir target_dir
+  local instance_slug revision tmp_dir target_dir source_dir
   instance_slug="$(slugify "${MODEL_NAME}")"
-  model_ref="${KAGGLE_OWNER}/${KAGGLE_MODEL_SLUG}/${KAGGLE_FRAMEWORK}/${instance_slug}"
-  version="${MODEL_VERSION}"
-  if [[ "${version}" == "latest" ]]; then
-    version="$(latest_model_version "${model_ref}")"
-    if [[ -z "${version}" ]]; then
-      echo "Could not resolve latest version for Kaggle Model: ${model_ref}" >&2
-      exit 1
-    fi
+  revision="${MODEL_VERSION}"
+  if [[ "${revision}" == "latest" ]]; then
+    revision="main"
   fi
 
-  model_version_ref="${model_ref}/${version}"
-  tmp_dir="${SAVED_RESULTS_DIR}/.kaggle_model_download/${instance_slug}"
+  tmp_dir="${SAVED_RESULTS_DIR}/.hf_model_download/${instance_slug}"
   target_dir="${SAVED_RESULTS_DIR}/${MODEL_NAME}/checkpoints"
 
   rm -rf "${tmp_dir}"
   mkdir -p "${tmp_dir}" "${target_dir}"
 
-  echo "============ Download Kaggle Model ============"
-  echo "model: ${model_version_ref}"
+  echo "============ Download Hugging Face Model ============"
+  echo "repo_id: ${HF_REPO_ID}"
+  echo "path_in_repo: ${instance_slug}"
+  echo "revision: ${revision}"
   echo "target: ${target_dir}"
-  echo "==============================================="
+  echo "====================================================="
 
-  kaggle models instances versions download "${model_version_ref}" \
-    -p "${tmp_dir}" \
-    --untar \
-    --force
+  HF_REPO_ID="${HF_REPO_ID}" \
+  HF_REPO_TYPE="${HF_REPO_TYPE}" \
+  HF_MODEL_PATH="${instance_slug}" \
+  HF_REVISION="${revision}" \
+  HF_LOCAL_DIR="${tmp_dir}" \
+  python -c '
+import os
+from huggingface_hub import snapshot_download
 
-  if [[ -d "${tmp_dir}/checkpoints" ]]; then
-    cp -f "${tmp_dir}/checkpoints/"*.pth "${target_dir}/" 2>/dev/null || true
+repo_id = os.environ["HF_REPO_ID"]
+repo_type = os.environ.get("HF_REPO_TYPE", "model")
+path = os.environ["HF_MODEL_PATH"].strip("/")
+revision = os.environ.get("HF_REVISION") or "main"
+local_dir = os.environ["HF_LOCAL_DIR"]
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+
+snapshot_download(
+    repo_id=repo_id,
+    repo_type=repo_type,
+    revision=revision,
+    local_dir=local_dir,
+    allow_patterns=[f"{path}/**"],
+    token=token,
+)
+print(f"Downloaded {repo_id}/{path} to {local_dir}")
+'
+
+  source_dir="${tmp_dir}/${instance_slug}/checkpoints"
+  if [[ -d "${source_dir}" ]]; then
+    cp -f "${source_dir}/"*.pth "${target_dir}/" 2>/dev/null || true
   else
-    find "${tmp_dir}" -maxdepth 4 -type f -name '*.pth' -exec cp -f {} "${target_dir}/" \;
+    find "${tmp_dir}/${instance_slug}" -maxdepth 4 -type f -name '*.pth' -exec cp -f {} "${target_dir}/" \;
   fi
 
   if [[ ! -f "${target_dir}/best_model.pth" && ! -f "${target_dir}/last_model.pth" ]]; then
-    echo "Downloaded files, but no best_model.pth/last_model.pth found under ${tmp_dir}" >&2
+    echo "Downloaded files, but no best_model.pth/last_model.pth found under ${tmp_dir}/${instance_slug}" >&2
     exit 1
   fi
 

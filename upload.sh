@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Simple Kaggle upload helper.
+# Simple upload helper.
 #
 # Model checkpoint:
 #   bash upload.sh --model MODEL_NAME=retina-baseline
@@ -11,8 +11,11 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 SAVED_RESULTS_DIR="${SAVED_RESULTS_DIR:-${PROJECT_ROOT}/saved_results}"
-EXPORT_ROOT="${EXPORT_ROOT:-${SAVED_RESULTS_DIR}/kaggle_upload_export}"
+EXPORT_ROOT="${EXPORT_ROOT:-${SAVED_RESULTS_DIR}/upload_export}"
 KAGGLE_OWNER="${KAGGLE_OWNER:-${KAGGLE_USERNAME:-ngocbaotrinhtuan}}"
+HF_REPO_ID="${HF_REPO_ID:-ngocbao05/object-detection-checkpoints}"
+HF_REPO_TYPE="${HF_REPO_TYPE:-model}"
+HF_REPO_PRIVATE="${HF_REPO_PRIVATE:-0}"
 
 KAGGLE_MODEL_SLUG="${KAGGLE_MODEL_SLUG:-object-detection-checkpoints}"
 KAGGLE_MODEL_TITLE="${KAGGLE_MODEL_TITLE:-Object Detection Checkpoints}"
@@ -40,8 +43,8 @@ Examples:
   bash upload.sh --dataset
 
 Optional env:
-  KAGGLE_OWNER, KAGGLE_MODEL_SLUG, KAGGLE_FRAMEWORK, KAGGLE_DATASET_SLUG,
-  SAVED_RESULTS_DIR, PUBLIC_DIR
+  HF_REPO_ID, HF_REPO_PRIVATE, HF_TOKEN, HUGGINGFACE_TOKEN,
+  KAGGLE_OWNER, KAGGLE_DATASET_SLUG, SAVED_RESULTS_DIR, PUBLIC_DIR
 EOF
 }
 
@@ -54,6 +57,13 @@ slugify() {
 require_kaggle() {
   if ! command -v kaggle >/dev/null 2>&1; then
     echo "kaggle CLI is not installed. Run: pip install kaggle" >&2
+    exit 1
+  fi
+}
+
+require_huggingface_hub() {
+  if ! python -c "import huggingface_hub" >/dev/null 2>&1; then
+    echo "huggingface_hub is not installed. Run: pip install huggingface-hub" >&2
     exit 1
   fi
 }
@@ -180,10 +190,9 @@ upload_model() {
     exit 1
   fi
 
-  require_kaggle
+  require_huggingface_hub
 
-  local checkpoint_dir best_src last_src instance_slug model_ref
-  local model_metadata_dir instance_metadata_dir version_dir
+  local checkpoint_dir best_src last_src instance_slug version_dir
   checkpoint_dir="${SAVED_RESULTS_DIR}/${MODEL_NAME}/checkpoints"
   best_src="$(latest_file "${checkpoint_dir}" 'best_model-*.pth' "${checkpoint_dir}/best_model.pth" || true)"
   last_src="$(latest_file "${checkpoint_dir}" 'last_model-*.pth' "${checkpoint_dir}/last_model.pth" || true)"
@@ -194,10 +203,7 @@ upload_model() {
   fi
 
   instance_slug="$(slugify "${MODEL_NAME}")"
-  model_ref="${KAGGLE_OWNER}/${KAGGLE_MODEL_SLUG}/${KAGGLE_FRAMEWORK}/${instance_slug}"
-  model_metadata_dir="${EXPORT_ROOT}/model_metadata"
-  instance_metadata_dir="${EXPORT_ROOT}/instance_${instance_slug}_metadata"
-  version_dir="${EXPORT_ROOT}/model_${instance_slug}_version"
+  version_dir="${EXPORT_ROOT}/hf_model_${instance_slug}"
 
   rm -rf "${version_dir}"
   mkdir -p "${version_dir}/checkpoints"
@@ -210,23 +216,54 @@ upload_model() {
   "last_source": "${last_src}"
 }
 EOF
+  cat > "${version_dir}/README.md" <<EOF
+# ${MODEL_NAME}
 
-  write_model_metadata "${model_metadata_dir}"
-  write_model_instance_metadata "${instance_metadata_dir}" "${instance_slug}"
+Object detection checkpoint exported from \`saved_results/${MODEL_NAME}/checkpoints\`.
 
-  echo "============ Upload Kaggle Model ============"
+Files:
+- \`checkpoints/best_model.pth\`
+- \`checkpoints/last_model.pth\`
+- \`checkpoint-manifest.json\`
+EOF
+
+  echo "============ Upload Hugging Face Model ============"
   echo "model_name: ${MODEL_NAME}"
-  echo "model_ref: ${model_ref}"
+  echo "repo_id: ${HF_REPO_ID}"
+  echo "path_in_repo: ${instance_slug}"
   echo "checkpoint_dir: ${checkpoint_dir}"
   echo "version_dir: ${version_dir}"
-  echo "============================================="
+  echo "==================================================="
 
-  run_allow_exists kaggle models create -p "${model_metadata_dir}"
-  run_allow_exists kaggle models instances create -p "${instance_metadata_dir}" --dir-mode zip
-  kaggle models instances versions create "${model_ref}" \
-    -p "${version_dir}" \
-    --dir-mode zip \
-    -n "Update checkpoint for ${MODEL_NAME}"
+  HF_REPO_ID="${HF_REPO_ID}" \
+  HF_REPO_TYPE="${HF_REPO_TYPE}" \
+  HF_REPO_PRIVATE="${HF_REPO_PRIVATE}" \
+  HF_MODEL_PATH="${instance_slug}" \
+  HF_UPLOAD_DIR="${version_dir}" \
+  HF_COMMIT_MESSAGE="Update checkpoint for ${MODEL_NAME}" \
+  python -c '
+import os
+from huggingface_hub import HfApi
+
+repo_id = os.environ["HF_REPO_ID"]
+repo_type = os.environ.get("HF_REPO_TYPE", "model")
+private = os.environ.get("HF_REPO_PRIVATE", "0") == "1"
+path_in_repo = os.environ["HF_MODEL_PATH"]
+folder_path = os.environ["HF_UPLOAD_DIR"]
+commit_message = os.environ.get("HF_COMMIT_MESSAGE", "Upload checkpoint")
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+
+api = HfApi(token=token)
+api.create_repo(repo_id=repo_id, repo_type=repo_type, private=private, exist_ok=True)
+api.upload_folder(
+    repo_id=repo_id,
+    repo_type=repo_type,
+    folder_path=folder_path,
+    path_in_repo=path_in_repo,
+    commit_message=commit_message,
+)
+print(f"Uploaded to https://huggingface.co/{repo_id}/tree/main/{path_in_repo}")
+'
 }
 
 upload_dataset() {
