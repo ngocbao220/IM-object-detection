@@ -44,8 +44,8 @@ def parse_args() -> argparse.Namespace:
         help="Kaggle Model version to download when --model_name is used. Default: latest.",
     )
     parser.add_argument("--classes", default="public/classes.json")
-    parser.add_argument("--score_threshold", type=float, default=0.5)
-    parser.add_argument("--nms_threshold", type=float, default=0.5)
+    parser.add_argument("--score_threshold", type=float, default=0.0001)
+    parser.add_argument("--nms_threshold", type=float, default=0.4)
     parser.add_argument("--backbone", choices=sorted(BACKBONE_WEIGHTS), default="resnet101")
     parser.add_argument(
         "--custom",
