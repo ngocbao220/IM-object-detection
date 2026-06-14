@@ -525,11 +525,11 @@ run_hgnet_ablation_experiment() {
   train
 }
 augment_ablation() {
-  # H1: HGNet + flip_color_scale_crop
-  run_hgnet_ablation_experiment "H1_flip_color_scale_crop" 1 0.5 0.3 0.0 0.4 0.1 0.0 0.0 "none"
+  # # H1: HGNet + flip_color_scale_crop
+  # run_hgnet_ablation_experiment "H1_flip_color_scale_crop" 1 0.5 0.3 0.0 0.4 0.1 0.0 0.0 "none"
 
-  # H2: HGNet + all_strong
-  run_hgnet_ablation_experiment "H2_all_strong" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08 "none"
+  # # H2: HGNet + all_strong
+  # run_hgnet_ablation_experiment "H2_all_strong" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08 "none"
 
   # H3: HGNet + best augment + sampler strategies
   run_hgnet_ablation_experiment "H3a_best_aug_class_balanced" 1 0.5 0.3 0.05 0.4 0.2 0.08 0.08 "class_balanced"
