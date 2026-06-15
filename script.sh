@@ -48,8 +48,8 @@ THRESHOLD_TUNING_OUTPUT="${THRESHOLD_TUNING_OUTPUT:-${RUN_RESULTS_DIR}/threshold
 # =========================
 # 3. Important Model Params
 # =========================
-# MODEL_IMPL accepts: torchvision, custom, retina, yolo. CUSTOM_MODEL=0/1 is kept for compatibility.
-MODEL_IMPL="${MODEL_IMPL:-custom}"
+# MODEL_IMPL accepts: faster_rcnn, retina, yolo. CUSTOM_MODEL=0/1 is kept for compatibility.
+MODEL_IMPL="${MODEL_IMPL:-faster_rcnn}"
 CUSTOM_MODEL="${CUSTOM_MODEL:-1}"
 BACKBONE="${BACKBONE:-resnet50}"
 PRETRAINED_BACKBONE="${PRETRAINED_BACKBONE:-1}"
@@ -154,11 +154,9 @@ ABLATION_EPOCHS="${ABLATION_EPOCHS:-50}"
 
 if [[ -n "${MODEL_IMPL}" ]]; then
   case "${MODEL_IMPL}" in
-    custom)
+    custom|faster_rcnn)
+      MODEL_IMPL="faster_rcnn"
       CUSTOM_MODEL=1
-      ;;
-    torchvision)
-      CUSTOM_MODEL=0
       ;;
     retina)
       CUSTOM_MODEL=0
@@ -167,7 +165,7 @@ if [[ -n "${MODEL_IMPL}" ]]; then
       CUSTOM_MODEL=0
       ;;
     *)
-      echo "MODEL_IMPL must be one of 'torchvision', 'custom', 'retina', 'yolo'. Got: ${MODEL_IMPL}"
+      echo "MODEL_IMPL must be one of 'faster_rcnn', 'retina', 'yolo'. Got: ${MODEL_IMPL}"
       exit 1
       ;;
   esac
@@ -199,11 +197,7 @@ train() {
   resume_checkpoint="${RESUME_FROM}"
   resolved_model_impl="${MODEL_IMPL}"
   if [[ -z "${resolved_model_impl}" ]]; then
-    if [[ "${CUSTOM_MODEL}" == "1" ]]; then
-      resolved_model_impl="custom"
-    else
-      resolved_model_impl="torchvision"
-    fi
+    resolved_model_impl="faster_rcnn"
   fi
   if [[ "${RESUME_LAST}" == "1" && -z "${resume_checkpoint}" ]]; then
     resume_checkpoint="${RUN_RESULTS_DIR}/checkpoints/last_model.pth"
@@ -337,11 +331,7 @@ train() {
 predict() {
   resolved_model_impl="${MODEL_IMPL}"
   if [[ -z "${resolved_model_impl}" ]]; then
-    if [[ "${CUSTOM_MODEL}" == "1" ]]; then
-      resolved_model_impl="custom"
-    else
-      resolved_model_impl="torchvision"
-    fi
+    resolved_model_impl="faster_rcnn"
   fi
   predict_args=(
     --image_dir "${PREDICT_IMAGE_DIR}"
@@ -381,11 +371,7 @@ predict() {
 predict_raw() {
   resolved_model_impl="${MODEL_IMPL}"
   if [[ -z "${resolved_model_impl}" ]]; then
-    if [[ "${CUSTOM_MODEL}" == "1" ]]; then
-      resolved_model_impl="custom"
-    else
-      resolved_model_impl="torchvision"
-    fi
+    resolved_model_impl="faster_rcnn"
   fi
 
   raw_score_threshold="${RAW_SCORE_THRESHOLD:-0.0}"
@@ -488,7 +474,7 @@ run_hgnet_ablation_experiment() {
   class_loss_weighting="${11:-none}"
 
   ablation_custom_model=0
-  if [[ "${ABLATION_MODEL_IMPL}" == "custom" ]]; then
+  if [[ "${ABLATION_MODEL_IMPL}" == "custom" || "${ABLATION_MODEL_IMPL}" == "faster_rcnn" ]]; then
     ablation_custom_model=1
   fi
 

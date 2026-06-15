@@ -8,7 +8,13 @@ from models.retina import RETINA_MODEL_VERSION, create_retinanet
 from models.yolo import YOLO_MODEL_VERSION, create_yolo_like
 
 
-MODEL_IMPL_CHOICES = ("torchvision", "custom", "retina", "yolo")
+MODEL_IMPL_CHOICES = ("faster_rcnn", "retina", "yolo")
+
+
+def normalize_model_impl(model_impl: str) -> str:
+    if model_impl == "custom":
+        return "faster_rcnn"
+    return model_impl
 
 
 def create_detection_model(
@@ -35,6 +41,7 @@ def create_detection_model(
     yolo_max_detections: int = 300,
     class_loss_weights: torch.Tensor | None = None,
 ) -> torch.nn.Module:
+    model_impl = normalize_model_impl(model_impl)
     if model_impl == "retina":
         return create_retinanet(
             num_classes=num_classes,
@@ -67,30 +74,32 @@ def create_detection_model(
             max_detections_per_image=yolo_max_detections,
             class_loss_weights=class_loss_weights,
         )
-    return create_faster_rcnn(
-        num_classes=num_classes,
-        backbone_name=backbone_name,
-        pretrained_backbone=pretrained_backbone,
-        trainable_backbone_layers=trainable_backbone_layers,
-        min_size=min_size,
-        max_size=max_size,
-        anchor_sizes=anchor_sizes,
-        anchor_ratios=anchor_ratios,
-        custom=model_impl == "custom",
-        box_score_thresh=box_score_thresh,
-        box_nms_thresh=box_nms_thresh,
-        train_pre_nms_top_n=train_pre_nms_top_n,
-        train_post_nms_top_n=train_post_nms_top_n,
-        test_pre_nms_top_n=test_pre_nms_top_n,
-        test_post_nms_top_n=test_post_nms_top_n,
-        fixed_batch_shape=fixed_batch_shape,
-        roi_dropout=roi_dropout,
-        class_loss_weights=class_loss_weights if model_impl == "custom" else None,
-    )
+    if model_impl == "faster_rcnn":
+        return create_faster_rcnn(
+            num_classes=num_classes,
+            backbone_name=backbone_name,
+            pretrained_backbone=pretrained_backbone,
+            trainable_backbone_layers=trainable_backbone_layers,
+            min_size=min_size,
+            max_size=max_size,
+            anchor_sizes=anchor_sizes,
+            anchor_ratios=anchor_ratios,
+            box_score_thresh=box_score_thresh,
+            box_nms_thresh=box_nms_thresh,
+            train_pre_nms_top_n=train_pre_nms_top_n,
+            train_post_nms_top_n=train_post_nms_top_n,
+            test_pre_nms_top_n=test_pre_nms_top_n,
+            test_post_nms_top_n=test_post_nms_top_n,
+            fixed_batch_shape=fixed_batch_shape,
+            roi_dropout=roi_dropout,
+            class_loss_weights=class_loss_weights,
+        )
+    raise ValueError(f"Unsupported model_impl: {model_impl}. Choose one of {MODEL_IMPL_CHOICES}.")
 
 
 def model_version_for_impl(model_impl: str) -> int | None:
-    if model_impl == "custom":
+    model_impl = normalize_model_impl(model_impl)
+    if model_impl == "faster_rcnn":
         return CUSTOM_MODEL_VERSION
     if model_impl == "retina":
         return RETINA_MODEL_VERSION

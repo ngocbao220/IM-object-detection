@@ -4,9 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-# Default is the repository custom Faster R-CNN. Override with
-# MODEL_IMPL=torchvision when you explicitly want the torchvision baseline.
-MODEL_IMPL="${MODEL_IMPL:-custom}" \
+# Default is the repository custom Faster R-CNN.
+MODEL_IMPL="${MODEL_IMPL:-faster_rcnn}" \
 BACKBONE="${BACKBONE:-resnet101}" \
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-faster-rcnn-resnet101-fpn}" \
 MIN_SIZE="${MIN_SIZE:-512}" \

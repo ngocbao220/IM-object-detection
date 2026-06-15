@@ -26,7 +26,12 @@ try:
 except ImportError:  # pragma: no cover
     wandb = None
 
-from models.factory import MODEL_IMPL_CHOICES, create_detection_model, model_version_for_impl
+from models.factory import (
+    MODEL_IMPL_CHOICES,
+    create_detection_model,
+    model_version_for_impl,
+    normalize_model_impl,
+)
 from models.modules import BACKBONE_WEIGHTS
 from utils.dataset import OdDataset, build_train_transforms, collate_fn
 from utils.helper import (
@@ -70,17 +75,17 @@ def parse_args() -> argparse.Namespace:
         "--trainable_backbone_layers",
         type=int,
         default=3,
-        help="Number of trainable ResNet stages. Custom model supports 0-4; torchvision supports 0-5.",
+        help="Number of trainable ResNet stages. Faster R-CNN, RetinaNet, and YOLO models support 0-4.",
     )
     parser.add_argument(
         "--custom",
         action="store_true",
-        help="Use the repository's custom Faster R-CNN implementation. Default uses torchvision detection.",
+        help="Use the repository's Faster R-CNN implementation.",
     )
     parser.add_argument(
         "--model_impl",
         choices=MODEL_IMPL_CHOICES,
-        default="torchvision",
+        default="faster_rcnn",
         help="Detection model implementation to train.",
     )
     parser.add_argument("--min_size", type=int, default=768)
@@ -103,7 +108,7 @@ def parse_args() -> argparse.Namespace:
         "--fixed_batch_shape",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="For the custom model, pad every resized batch to max_size x max_size to reduce CUDA allocator churn.",
+        help="For Faster R-CNN, pad every resized batch to max_size x max_size to reduce CUDA allocator churn.",
     )
     parser.add_argument("--roi_dropout", type=float, default=0.0)
     parser.add_argument("--retina_topk_candidates", type=int, default=1000)
@@ -195,7 +200,7 @@ def parse_args() -> argparse.Namespace:
         "--class_loss_weighting",
         choices=["none", "inverse", "sqrt_inverse"],
         default="none",
-        help="Weight classification loss by class frequency. Only custom/retina/yolo models use this directly.",
+        help="Weight classification loss by class frequency. Faster R-CNN/RetinaNet/YOLO models use this directly.",
     )
     parser.add_argument(
         "--class_loss_max_weight",
@@ -207,7 +212,7 @@ def parse_args() -> argparse.Namespace:
         "--class_loss_background_weight",
         type=float,
         default=1.0,
-        help="Background class weight for custom Faster R-CNN ROI cross entropy.",
+        help="Background class weight for Faster R-CNN ROI cross entropy.",
     )
     parser.add_argument(
         "--oversample_class",
@@ -989,7 +994,8 @@ def format_session_info(info: dict[str, Any]) -> str:
 def main() -> None:
     args = parse_args()
     if args.custom:
-        args.model_impl = "custom"
+        args.model_impl = "faster_rcnn"
+    args.model_impl = normalize_model_impl(args.model_impl)
     if args.log_interval <= 0:
         raise ValueError("--log_interval must be greater than 0.")
     if args.early_stopping_patience <= 0:
@@ -1017,15 +1023,8 @@ def main() -> None:
         raise ValueError("--anchor_sizes must contain at least one value.")
     if anchor_sizes is not None and len(anchor_sizes) != 5:
         raise ValueError("--anchor_sizes must contain exactly 5 values for the FPN levels.")
-    if args.model_impl == "custom" and not 0 <= args.trainable_backbone_layers <= 4:
-        raise ValueError("--trainable_backbone_layers must be between 0 and 4 for the custom model.")
-    if args.model_impl == "torchvision" and not 0 <= args.trainable_backbone_layers <= 5:
-        raise ValueError("--trainable_backbone_layers must be between 0 and 5 for torchvision.")
-    if args.model_impl == "torchvision" and args.backbone not in {"resnet50", "resnet101"}:
-        raise ValueError(
-            "--model_impl torchvision only supports --backbone resnet50/resnet101. "
-            "Use --model_impl retina/custom/yolo for hgnetv2_b4."
-        )
+    if args.model_impl == "faster_rcnn" and not 0 <= args.trainable_backbone_layers <= 4:
+        raise ValueError("--trainable_backbone_layers must be between 0 and 4 for Faster R-CNN.")
     if args.model_impl == "retina" and not 0 <= args.trainable_backbone_layers <= 4:
         raise ValueError("--trainable_backbone_layers must be between 0 and 4 for RetinaNet.")
     if args.model_impl == "yolo" and not 0 <= args.trainable_backbone_layers <= 4:
@@ -1128,8 +1127,6 @@ def main() -> None:
         args.class_loss_max_weight,
         args.class_loss_background_weight,
     )
-    if args.class_loss_weighting != "none" and args.model_impl == "torchvision" and is_main_process:
-        print("Class loss weighting is ignored for MODEL_IMPL=torchvision because torchvision losses are internal.")
     if world_size > 1 and oversampling_sampler is not None:
         raise RuntimeError("--oversample_class is currently supported only for single-GPU training.")
     train_sampler = (
@@ -1253,7 +1250,7 @@ def main() -> None:
             "score_threshold": args.score_threshold,
             "backbone": args.backbone,
             "trainable_backbone_layers": args.trainable_backbone_layers,
-            "custom_model": args.model_impl == "custom",
+            "custom_model": args.model_impl == "faster_rcnn",
             "model_impl": args.model_impl,
             "roi_dropout": args.roi_dropout,
             "retina_topk_candidates": args.retina_topk_candidates,
@@ -1360,7 +1357,7 @@ def main() -> None:
     model_config = {
         "model_impl": args.model_impl,
         "backbone": args.backbone,
-        "custom_model": args.model_impl == "custom",
+        "custom_model": args.model_impl == "faster_rcnn",
         "custom_model_version": model_version_for_impl(args.model_impl),
         "trainable_backbone_layers": args.trainable_backbone_layers,
         "roi_dropout": args.roi_dropout,

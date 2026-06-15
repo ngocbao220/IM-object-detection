@@ -13,7 +13,7 @@ from PIL import Image
 from torchvision.transforms import functional as F
 from tqdm.auto import tqdm
 
-from models.factory import MODEL_IMPL_CHOICES, create_detection_model
+from models.factory import MODEL_IMPL_CHOICES, create_detection_model, normalize_model_impl
 from models.modules import BACKBONE_WEIGHTS
 from utils.helper import get_device, load_checkpoint, load_classes, print_run_configuration
 
@@ -61,12 +61,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--custom",
         action="store_true",
-        help="Use the repository's custom Faster R-CNN implementation. Default uses torchvision detection.",
+        help="Use the repository's Faster R-CNN implementation.",
     )
     parser.add_argument(
         "--model_impl",
         choices=MODEL_IMPL_CHOICES,
-        default="torchvision",
+        default="faster_rcnn",
         help="Detection model implementation to load.",
     )
     parser.add_argument("--min_size", type=int, default=768)
@@ -230,7 +230,8 @@ def predict_images(
 def main() -> None:
     args = parse_args()
     if args.custom:
-        args.model_impl = "custom"
+        args.model_impl = "faster_rcnn"
+    args.model_impl = normalize_model_impl(args.model_impl)
     if args.min_size <= 0 or args.max_size <= 0 or args.min_size > args.max_size:
         raise ValueError("--min_size and --max_size must be positive with min_size <= max_size.")
     image_paths = list_images(args.image_dir)
@@ -246,7 +247,7 @@ def main() -> None:
     model_config = checkpoint_metadata.get("model_config", {})
     checkpoint_state = checkpoint_metadata.get("model_state_dict", {})
     class_loss_weights = checkpoint_state.get("class_loss_weights")
-    model_impl = model_config.get("model_impl", args.model_impl)
+    model_impl = normalize_model_impl(model_config.get("model_impl", args.model_impl))
     backbone = model_config.get("backbone", args.backbone)
     min_size = int(model_config.get("min_size", args.min_size))
     max_size = int(model_config.get("max_size", args.max_size))
@@ -270,7 +271,7 @@ def main() -> None:
             "score_threshold": args.score_threshold,
             "nms_threshold": args.nms_threshold,
             "model": f"{model_impl} {backbone}",
-            "custom_model": model_impl == "custom",
+            "custom_model": model_impl == "faster_rcnn",
             "model_impl": model_impl,
             "min_size": min_size,
             "max_size": max_size,

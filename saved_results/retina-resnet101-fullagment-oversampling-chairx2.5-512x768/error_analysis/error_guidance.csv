@@ -1,8 +1,0 @@
-Loại lỗi,Dấu hiệu,Hướng xử lý
-False Negative,Có object thật nhưng model không detect,"Giảm confidence threshold, tăng image size, thêm dữ liệu, train thêm"
-False Positive,Model detect nhầm background,"Tăng confidence threshold, thêm ảnh negative, kiểm tra annotation thiếu"
-Wrong Class,Box đúng nhưng class sai,"Kiểm tra label, xử lý class imbalance, xem class có giống nhau không"
-Poor Localization,"Đúng class nhưng box lệch, mAP@0.75 thấp","Kiểm tra annotation, train lâu hơn với LR nhỏ, tăng image size"
-Duplicate Boxes,Một object có nhiều predicted boxes,Điều chỉnh NMS threshold
-Small Object Miss,Object nhỏ thường bị bỏ sót,"Tăng resolution, oversampling ảnh có object nhỏ"
-Occlusion / Hard Background,Object bị che khuất hoặc background giống object,"Thêm dữ liệu tương tự, augmentation phù hợp"

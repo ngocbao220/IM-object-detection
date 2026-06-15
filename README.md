@@ -17,10 +17,10 @@ WANDB_RUN_NAME=baseline bash script.sh train
 USE_WANDB=1 WANDB_RUN_NAME=baseline GPU=0 bash script.sh train
 ```
 
-By default training uses the `torchvision.models.detection` Faster R-CNN
-implementation with a ResNet-101 backbone. Only the backbone can use ImageNet
-weights; detection heads are initialized from scratch. Use a new phase name
-when comparing with older ResNet-50 runs:
+By default training uses the repository's custom Faster R-CNN implementation
+with a ResNet-101 backbone. Only the backbone can use ImageNet weights;
+detection heads are initialized from scratch. Use a new phase name when
+comparing with older ResNet-50 runs:
 
 ```bash
 USE_WANDB=1 WANDB_RUN_NAME=resnet101-baseline GPU=0 bash script.sh train
@@ -36,9 +36,9 @@ BACKBONE=resnet101 MIN_SIZE=768 MAX_SIZE=1024 \
 WANDB_RUN_NAME=resnet101-768x1024 GPU=0 bash script.sh train
 ```
 
-To use the repository's custom Faster R-CNN implementation instead of the
-library implementation, set `CUSTOM_MODEL=1`. Custom and library checkpoints
-are not interchangeable:
+The custom Faster R-CNN implementation is selected by default as
+`MODEL_IMPL=faster_rcnn`. The `CUSTOM_MODEL=1` setting is still accepted for
+older commands:
 
 ```bash
 CUSTOM_MODEL=1 BACKBONE=resnet101 MIN_SIZE=512 MAX_SIZE=768 \

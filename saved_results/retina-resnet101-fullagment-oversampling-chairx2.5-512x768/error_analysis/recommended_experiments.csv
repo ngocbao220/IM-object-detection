@@ -1,6 +1,0 @@
-priority,evidence,experiment
-396,False negatives exist; model misses real objects.,"Sweep lower SCORE_THRESHOLD during predict/evaluate; if recall improves, use lower threshold for submission."
-386,False positives indicate background confusion.,Raise SCORE_THRESHOLD; inspect high-confidence FP and add similar negative/background-heavy images.
-113,Poor localization hurts stricter IoU metrics.,"Train longer with cosine/plateau LR, inspect annotation tightness, consider higher image size."
-78,"Wrong-class errors; weakest classes by FN rate: ['chair', 'car', 'person'].",Check labels and class similarity; try class/instance oversampling for weak classes.
-43,Duplicate boxes remain after NMS.,Sweep lower NMS_THRESHOLD and compare precision/recall tradeoff.
