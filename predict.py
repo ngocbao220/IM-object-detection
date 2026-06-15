@@ -30,18 +30,29 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Checkpoint path. If omitted with --model_name, predict.py uses "
-            "saved_results/<model_name>/checkpoints/best_model.pth."
+            "saved_results/<model_name>/checkpoints/<version>_model.pth."
         ),
     )
     parser.add_argument(
         "--model_name",
         default=None,
-        help="Optional Kaggle Model instance/run name to download when the checkpoint is missing.",
+        help="Optional Hugging Face model/run name to download when the checkpoint is missing.",
     )
     parser.add_argument(
         "--model_version",
         default="latest",
-        help="Kaggle Model version to download when --model_name is used. Default: latest.",
+        help="Hugging Face revision to download when --model_name is used. Default: latest.",
+    )
+    parser.add_argument(
+        "--version",
+        choices=("best", "last"),
+        default="best",
+        help="Checkpoint alias to use with --model_name. Default: best.",
+    )
+    parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Download from Hugging Face even if the selected checkpoint already exists locally.",
     )
     parser.add_argument("--classes", default="public/classes.json")
     parser.add_argument("--score_threshold", type=float, default=0.0001)
@@ -70,16 +81,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def default_checkpoint_for_model(model_name: str) -> Path:
-    return Path("saved_results") / model_name / "checkpoints" / "best_model.pth"
+def default_checkpoint_for_model(model_name: str, version: str = "best") -> Path:
+    return Path("saved_results") / model_name / "checkpoints" / f"{version}_model.pth"
 
 
-def find_downloaded_checkpoint(model_name: str, preferred_path: Path) -> Path:
+def find_downloaded_checkpoint(model_name: str, preferred_path: Path, version: str = "best") -> Path:
     if preferred_path.exists():
         return preferred_path
 
     checkpoint_dir = Path("saved_results") / model_name / "checkpoints"
-    for filename in ("best_model.pth", "last_model.pth"):
+    ordered_filenames = [f"{version}_model.pth"]
+    ordered_filenames.extend(
+        filename
+        for filename in ("best_model.pth", "last_model.pth")
+        if filename not in ordered_filenames
+    )
+    for filename in ordered_filenames:
         candidate = checkpoint_dir / filename
         if candidate.exists():
             return candidate
@@ -95,14 +112,19 @@ def find_downloaded_checkpoint(model_name: str, preferred_path: Path) -> Path:
 
 
 def ensure_checkpoint_available(args: argparse.Namespace) -> Path:
+    if args.force_download and not args.model_name:
+        raise ValueError("--force-download requires --model_name so predict.py knows what to download.")
+
     if args.checkpoint:
         checkpoint_path = Path(args.checkpoint)
     elif args.model_name:
-        checkpoint_path = default_checkpoint_for_model(args.model_name)
+        checkpoint_path = default_checkpoint_for_model(args.model_name, args.version)
     else:
         checkpoint_path = Path("saved_results/baseline/checkpoints/best_model.pth")
 
-    if checkpoint_path.exists() or not args.model_name:
+    if checkpoint_path.exists() and not args.force_download:
+        return checkpoint_path
+    if not args.model_name:
         return checkpoint_path
 
     download_script = Path(__file__).resolve().with_name("download.sh")
@@ -111,7 +133,10 @@ def ensure_checkpoint_available(args: argparse.Namespace) -> Path:
             f"Checkpoint not found at {checkpoint_path}, and download.sh was not found."
         )
 
-    print("Checkpoint not found; downloading from Kaggle Model...")
+    if args.force_download:
+        print("Force download enabled; downloading checkpoint from Hugging Face...")
+    else:
+        print("Checkpoint not found; downloading checkpoint from Hugging Face...")
     command = [
         "bash",
         str(download_script),
@@ -120,10 +145,10 @@ def ensure_checkpoint_available(args: argparse.Namespace) -> Path:
         f"MODEL_VERSION={args.model_version}",
     ]
     subprocess.run(command, check=True)
-    checkpoint_path = find_downloaded_checkpoint(args.model_name, checkpoint_path)
+    checkpoint_path = find_downloaded_checkpoint(args.model_name, checkpoint_path, args.version)
     if not checkpoint_path.exists():
         raise FileNotFoundError(
-            f"Downloaded Kaggle model '{args.model_name}', but no .pth checkpoint was found."
+            f"Downloaded Hugging Face model '{args.model_name}', but no .pth checkpoint was found."
         )
     return checkpoint_path
 
