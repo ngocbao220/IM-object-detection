@@ -244,6 +244,8 @@ def main() -> None:
         else {}
     )
     model_config = checkpoint_metadata.get("model_config", {})
+    checkpoint_state = checkpoint_metadata.get("model_state_dict", {})
+    class_loss_weights = checkpoint_state.get("class_loss_weights")
     model_impl = model_config.get("model_impl", args.model_impl)
     backbone = model_config.get("backbone", args.backbone)
     min_size = int(model_config.get("min_size", args.min_size))
@@ -274,6 +276,7 @@ def main() -> None:
             "max_size": max_size,
             "anchor_sizes": anchor_sizes or "model_default",
             "anchor_ratios": anchor_ratios or "model_default",
+            "class_loss_weights": "checkpoint" if class_loss_weights is not None else "not_used",
             "model_config_source": "checkpoint" if model_config else "CLI",
         },
     )
@@ -300,6 +303,7 @@ def main() -> None:
         retina_max_detections=int(model_config.get("retina_max_detections", args.retina_max_detections)),
         yolo_topk_candidates=int(model_config.get("yolo_topk_candidates", args.yolo_topk_candidates)),
         yolo_max_detections=int(model_config.get("yolo_max_detections", args.yolo_max_detections)),
+        class_loss_weights=class_loss_weights,
     ).to(device)
     if checkpoint_path.exists():
         checkpoint = load_checkpoint(checkpoint_path, model, device)
